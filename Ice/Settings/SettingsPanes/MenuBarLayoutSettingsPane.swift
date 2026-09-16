@@ -63,7 +63,7 @@ struct MenuBarLayoutSettingsPane: View {
         VStack(spacing: 12) {
             Text("Menu Bar Layout isn't available on this macOS version")
                 .font(.title2)
-            Text("This version of macOS no longer exposes individual menu bar items to Ice, so Ice can't list, arrange, or hide them. You can still Command + drag items in the menu bar to arrange them manually.")
+            Text("This version of macOS no longer exposes individual menu bar items to Ice, so Ice can't list, arrange, or hide them. You can still arrange items manually by hovering over a menu bar item and dragging it.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
