@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$SCRIPT_DIR"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 RELEASE_DIR="$PROJECT_DIR/release"
 APP_NAME="Ice"
 DMG_NAME="$APP_NAME.dmg"
@@ -27,7 +27,7 @@ VERSION_ARGS=""
 if [ -n "${MARKETING_VERSION:-}" ]; then VERSION_ARGS="$VERSION_ARGS MARKETING_VERSION=$MARKETING_VERSION"; fi
 if [ -n "${CURRENT_PROJECT_VERSION:-}" ]; then VERSION_ARGS="$VERSION_ARGS CURRENT_PROJECT_VERSION=$CURRENT_PROJECT_VERSION"; fi
 
-# Optional version override: ./build.sh v0.11.15
+# Optional version override: ./script/build.sh v0.11.15
 # Injects MARKETING_VERSION into the build (same mechanism as CI),
 # so Settings → About shows the given version instead of the
 # hardcoded one in project.pbxproj.
@@ -35,7 +35,7 @@ VERSION_ARGS=()
 if [ $# -ge 1 ]; then
     VERSION="${1#v}"
     if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo -e "${RED}Version '$1' must look like vX.Y.Z (e.g. ./build.sh v0.11.15)${NC}"
+        echo -e "${RED}Version '$1' must look like vX.Y.Z (e.g. ./script/build.sh v0.11.15)${NC}"
         exit 1
     fi
     # Mirror CI (1117 + run number); locally there is no run number,

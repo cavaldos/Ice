@@ -1,8 +1,25 @@
-# Release scripts
+# Scripts
 
-Automated releases so users get Sparkle update notifications — no manual version edits.
+Local dev and release helpers. Run from the repository root.
+
+## Local development
+
+```bash
+# Build Debug and launch the app
+./script/run.sh
+
+# Build Release DMG into release/ (optional version override for About)
+./script/build.sh [vX.Y.Z]
+
+# Same lint + build as CI — run before pushing (optional tag check)
+./script/ci-local.sh [vX.Y.Z]
+```
+
+Install SwiftLint first if needed: `brew install swiftlint`.
 
 ## Every release (2 commands)
+
+Automated releases so users get Sparkle update notifications — no manual version edits.
 
 ```bash
 # 1. Commit your code, then create + push the tag (lints/builds first, version comes from the tag name)

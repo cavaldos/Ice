@@ -1,8 +1,8 @@
 #!/bin/bash
 # Mirror of .github/workflows/lint.yml + release.yml — run before push/tag.
-# Usage: ./ci-local.sh [vX.Y.Z]  (pass tag to also validate tag format)
+# Usage: ./script/ci-local.sh [vX.Y.Z]  (pass tag to also validate tag format)
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 if ! command -v swiftlint >/dev/null; then
   echo "swiftlint not found — run: brew install swiftlint"

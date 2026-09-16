@@ -19,7 +19,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-./ci-local.sh "$TAG"
+./script/ci-local.sh "$TAG"
 
 git tag "$TAG"
 git push origin "$TAG"

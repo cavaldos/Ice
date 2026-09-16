@@ -1,11 +1,12 @@
 <div align="center">
     <img src="Ice/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width=200 height=200>
     <h1>Ice</h1>
+    <p>A powerful, open-source menu bar manager for macOS, focused on stability and a smooth, distraction-free experience.</p>
 </div>
 
-Ice is a powerful menu bar management tool. While its primary function is hiding and showing menu bar items, it aims to cover a wide variety of additional features to make it one of the most versatile menu bar tools available.
-
 ![Banner](https://github.com/user-attachments/assets/4423085c-4e4b-4f3d-ad0f-90a217c03470)
+
+<div align="center">
 
 [![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/cavaldos/Ice/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
@@ -14,115 +15,77 @@ Ice is a powerful menu bar management tool. While its primary function is hiding
 [![Website](https://img.shields.io/badge/Website-015FBA?style=flat-square)](https://icemenubar.app)
 [![License](https://img.shields.io/github/license/cavaldos/Ice?style=flat-square)](LICENSE)
 
-> [!NOTE]
-> Ice is currently in active development. Some features have not yet been implemented. Download the latest release [here](https://github.com/cavaldos/Ice/releases/latest) and see the roadmap below for upcoming features.
+<br>
 
 <a href="https://ko-fi.com/calvados" target="_blank">
     <img src="https://storage.ko-fi.com/cdn/kofi5.png?v=6" alt="Support me on Ko-fi" style="height: 60px !important;width: 217px !important;">
 </a>
 
+</div>
+
+> [!NOTE]
+> Ice is in active development. Grab the latest build from the [releases page](https://github.com/cavaldos/Ice/releases/latest).
+
 ## Install
 
-### Manual Installation
+Download `Ice.zip` from the [latest release](https://github.com/cavaldos/Ice/releases/latest) and move the unzipped app into `/Applications`.
 
-Download the "Ice.zip" file from the [latest release](https://github.com/cavaldos/Ice/releases/latest) and move the unzipped app into your `Applications` folder.
+For local development, see [script/README.md](script/README.md).
 
-### Run CI checks locally
+## Features
 
-To catch the same lint and macOS build failures before pushing, run from the repository root:
+**Menu bar management**
+Hide items individually or all at once, with an optional "always-hidden" section. Reveal hidden items by hovering, clicking an empty area, or scrolling — with auto-rehide, drag-and-drop reordering, and a separate Ice Bar for notched MacBooks.
 
-```sh
-./ci-local.sh
-```
+**Appearance**
+Custom menu bar tint (solid or gradient), shadow, border, and shape (rounded and/or split).
 
-The script supports `lint`, `build`, and `release` individually. For example, to validate a release tag format and build version `v0.11.13`:
+**Hotkeys**
+Toggle sections, the Ice Bar, divider icons, and application menus from the keyboard.
 
-```sh
-./ci-local.sh release v0.11.13
-```
+**Other**
+Launch at login, automatic updates.
 
-Install SwiftLint first if needed: `brew install swiftlint`.
+> Requires macOS 14 or later — ready for macOS 27. If you need a similar tool for macOS 13 or earlier, check out [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
 
-## Features/Roadmap
+## Project Philosophy
 
-### Menu bar item management
+Ice is built with a focus on **stability, performance, and a smooth user experience**.
 
-- [x] Hide menu bar items
-- [x] "Always-hidden" menu bar section
-- [x] Show hidden menu bar items when hovering over the menu bar
-- [x] Show hidden menu bar items when an empty area in the menu bar is clicked
-- [x] Show hidden menu bar items by scrolling or swiping in the menu bar
-- [x] Automatically rehide menu bar items
-- [x] Hide application menus when they overlap with shown menu bar items
-- [x] Drag and drop interface to arrange individual menu bar items
-- [x] Display hidden menu bar items in a separate bar (e.g. for MacBooks with the notch)
-- [x] Search menu bar items
-- [x] Menu bar item spacing (BETA)
-- [ ] Profiles for menu bar layout
-- [ ] Individual spacer items
-- [ ] Menu bar item groups
-- [ ] Show menu bar items when trigger conditions are met
+Rather than adding features for the sake of having more features, the project prioritizes a small, focused, and reliable feature set. Every feature should have a clear purpose, integrate naturally with macOS, and maintain Ice's simplicity and performance.
 
-### Menu bar appearance
-
-- [x] Menu bar tint (solid and gradient)
-- [x] Menu bar shadow
-- [x] Menu bar border
-- [x] Custom menu bar shapes (rounded and/or split)
-- [ ] Remove background behind menu bar
-- [ ] Rounded screen corners
-- [ ] Different settings for light/dark mode
-
-### Hotkeys
-
-- [x] Toggle individual menu bar sections
-- [x] Show the search panel
-- [x] Enable/disable the Ice Bar
-- [x] Show/hide section divider icons
-- [x] Toggle application menus
-- [ ] Enable/disable auto rehide
-- [ ] Temporarily show individual menu bar items
-
-### Other
-
-- [x] Launch at login
-- [x] Automatic updates
-- [ ] Menu bar widgets
-
-## Why does Ice only support macOS 14 and later?
-
-Ice uses a number of system APIs that are available starting in macOS 14. As such, there are no plans to support earlier versions of macOS.
+Our goal is to make Ice feel fast, predictable, and unobtrusive — a tool that quietly does its job without unnecessary complexity. Ice will always remain **open-source** and **free**.
 
 ## Gallery
 
-#### Demo on macOS 27
+**Demo**
+
+<video src="Resources/vid/demo.mp4" controls muted loop playsinline width="100%"></video>
 
 ![Demo macOS 27](Resources/demomaos27.gif)
 
-#### Show hidden menu bar items below the menu bar
+| Ice Bar | Drag & drop layout |
+|---|---|
+| ![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b) | ![Menu Bar Layout](https://github.com/user-attachments/assets/095442ba-f2d0-4bb4-9632-91e26ef8d45b) |
 
-![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b)
+| Appearance settings | Item spacing |
+|---|---|
+| ![Menu Bar Appearance](https://github.com/user-attachments/assets/8c22c185-c3d2-49bb-971e-e1fc17df04b3) | ![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6) |
 
-#### Drag-and-drop interface to arrange menu bar items
+## Contributing
 
-![Menu Bar Layout](https://github.com/user-attachments/assets/095442ba-f2d0-4bb4-9632-91e26ef8d45b)
+Contributions are welcome! Please read the [contribution guidelines](./Resources/document/CONTRIBUTING.md) before submitting a pull request.
 
-#### Customize the menu bar's appearance
+## Support
 
-![Menu Bar Appearance](https://github.com/user-attachments/assets/8c22c185-c3d2-49bb-971e-e1fc17df04b3)
-
-#### Menu bar item search
-
-![Menu Bar Item Search](https://github.com/user-attachments/assets/d1a7df3a-4989-4077-a0b1-8e7d5a1ba5b8)
-
-#### Custom menu bar item spacing
-
-![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6)
+<a href="https://ko-fi.com/calvados" target="_blank">
+    <img src="https://storage.ko-fi.com/cdn/kofi5.png?v=6" alt="Support me on Ko-fi" style="height: 36px !important;width: 130px !important;">
+</a>
 
 ## Acknowledgments
 
-This project is a fork of [Ice](https://github.com/jordanbaird/Ice) by [Jordan Baird](https://github.com/jordanbaird). Huge thanks to him for creating and open-sourcing such a powerful menu bar tool — this fork would not exist without his work.
+A fork of [Ice](https://github.com/jordanbaird/Ice) by [Jordan Baird](https://github.com/jordanbaird) — huge thanks for the original work this project builds on.
 
 ## License
 
-Ice is available under the [GPL-3.0 license](LICENSE).
+[GPL-3.0](LICENSE) — Ice is and will always remain open-source and free.
