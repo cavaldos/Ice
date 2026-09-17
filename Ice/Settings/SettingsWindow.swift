@@ -9,8 +9,9 @@ struct SettingsWindow: Scene {
     @ObservedObject var appState: AppState
 
     var body: some Scene {
-        Window(Constants.settingsWindowTitle, id: Constants.settingsWindowID) {
+        Window("", id: Constants.settingsWindowID) {
             SettingsView()
+                .tint(.blue)
                 .readWindow { window in
                     guard let window else {
                         return

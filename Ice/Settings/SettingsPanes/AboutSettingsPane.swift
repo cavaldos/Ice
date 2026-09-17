@@ -94,7 +94,7 @@ struct AboutSettingsPane: View {
 
     @ViewBuilder
     private var updatesSection: some View {
-        IceSection(options: .hasDividers) {
+        IceSection(options: .plain) {
             automaticallyCheckForUpdates
             automaticallyDownloadUpdates
             if updatesManager.canCheckForUpdates {

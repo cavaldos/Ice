@@ -40,6 +40,7 @@ struct MenuBarAppearanceEditor: View {
                     .font(.title2)
                     .frame(maxWidth: .infinity, alignment: .center)
                 Button("Done", action: closePopover)
+                    .buttonStyle(IceButtonStyle())
                     .controlSize(.large)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }

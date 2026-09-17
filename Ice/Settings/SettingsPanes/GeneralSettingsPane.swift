@@ -141,8 +141,6 @@ struct GeneralSettingsPane: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
 
-                Divider()
-
                 Button("Choose image…") {
                     isImportingCustomIceIcon = true
                 }
@@ -187,7 +185,12 @@ struct GeneralSettingsPane: View {
 
     @ViewBuilder
     private var useIceBar: some View {
-        Toggle("Use Ice Bar", isOn: manager.bindings.useIceBar)
+        Toggle(isOn: manager.bindings.useIceBar) {
+            HStack {
+                Text("Use Ice Bar")
+                BetaBadge()
+            }
+        }
             .annotation {
                 if appState.itemManager.isItemDiscoveryUnavailable {
                     Text("This feature is under development and will be released soon")

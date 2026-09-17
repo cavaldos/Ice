@@ -49,6 +49,7 @@ struct IceForm<Content: View>: View {
                         contentStack
                     }
                     .scrollContentBackground(.hidden)
+                    .scrollIndicators(.hidden)
                 } else {
                     contentStack
                 }
@@ -63,6 +64,7 @@ struct IceForm<Content: View>: View {
         VStack(alignment: alignment, spacing: spacing) {
             content
                 .toggleStyle(IceFormToggleStyle())
+                .buttonStyle(IceButtonStyle())
         }
         .padding(padding)
         .onFrameChange(update: $contentFrame)

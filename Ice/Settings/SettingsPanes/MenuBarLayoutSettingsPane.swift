@@ -26,7 +26,7 @@ struct MenuBarLayoutSettingsPane: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Menu Bar Icons")
-                    .font(.title2)
+                    .font(.title)
                 Text("\(totalCount)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -43,7 +43,7 @@ struct MenuBarLayoutSettingsPane: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(IceButtonStyle())
             }
 
             if sections.isEmpty {
@@ -63,8 +63,7 @@ struct MenuBarLayoutSettingsPane: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        ForEach(SectionMeta.all, id: \.kind) { meta in
+                    VStack(alignment: .leading, spacing: 20) {                        ForEach(SectionMeta.all, id: \.kind) { meta in
                             sectionView(meta: meta, items: sections[meta.kind] ?? [])
                         }
                         if hiddenDividerX == nil, alwaysHiddenDividerX == nil {
@@ -74,6 +73,7 @@ struct MenuBarLayoutSettingsPane: View {
                         }
                     }
                 }
+                .scrollIndicators(.hidden)
             }
         }
         .padding(20)
@@ -132,16 +132,16 @@ struct MenuBarLayoutSettingsPane: View {
             if let systemName = item.systemImage {
                 Image(systemName: systemName)
                     .font(.system(size: 22))
-                    .frame(width: 40, height: 34)
+                    .frame(width: 44, height: 38)
             } else if let icon = item.appIcon {
                 Image(nsImage: icon)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 40, height: 34)
+                    .frame(width: 44, height: 38)
             } else {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(.quaternary)
-                    .frame(width: 40, height: 34)
+                    .frame(width: 44, height: 38)
             }
             Text(item.title)
                 .font(.callout)
@@ -235,6 +235,7 @@ struct MenuBarLayoutSettingsPane: View {
                     }
                 }
             }
+            .buttonStyle(IceButtonStyle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -255,6 +256,7 @@ struct MenuBarLayoutSettingsPane: View {
                     }
                 }
             }
+            .buttonStyle(IceButtonStyle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
