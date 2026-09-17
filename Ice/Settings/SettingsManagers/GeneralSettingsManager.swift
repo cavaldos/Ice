@@ -83,6 +83,10 @@ final class GeneralSettingsManager: ObservableObject {
     func performSetup() {
         loadInitialState()
         configureCancellables()
+        // The $itemSpacingOffset sink only fires on change, and loading runs
+        // before it subscribes — sync once so spacingManager never starts at
+        // a stale 0 while a stored offset exists.
+        appState?.spacingManager.offset = Int(itemSpacingOffset)
     }
 
     private func loadInitialState() {
