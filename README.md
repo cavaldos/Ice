@@ -4,7 +4,7 @@
     <p>A powerful, open-source menu bar manager for macOS, focused on stability and a smooth, distraction-free experience.</p>
 </div>
 
-![Banner](https://github.com/user-attachments/assets/4423085c-4e4b-4f3d-ad0f-90a217c03470)
+![Banner](./Resources/Image/banner.png)
 
 <div align="center">
 

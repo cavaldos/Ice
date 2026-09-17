@@ -9,113 +9,89 @@ import Cocoa
 ///
 /// Pipeline move cũ của Ice cần CGS window (windowID, ownerPID, frame change)
 /// nên không còn hoạt động trên macOS 27. Cách này chỉ cần vị trí icon trên
-/// màn hình (đọc từ AX) và quyền Accessibility — đúng thao tác mà người dùng
-/// vẫn làm bằng tay, nên hệ thống vẫn nhận.
+/// màn hình và quyền Accessibility — đúng thao tác mà người dùng vẫn làm
+/// bằng tay, nên hệ thống vẫn nhận.
+///
+/// Tọa độ Quartz (origin top-left, cùng hệ với `CGEvent.location`,
+/// `WindowInfo.frame` và `AXUIElement` frame) — KHÔNG dùng tọa độ Cocoa
+/// (origin bottom-left) ở đây, nhầm là thả trượt rồi quét lại thấy vị trí
+/// cũ (tưởng "tự quay lại").
 enum MenuBarItemAXMover {
     /// Kéo từ `source` tới `destination` trong khi giữ Command.
     ///
-    /// Tọa độ Cocoa (origin bottom-left). Chạy nền, mất khoảng 1 giây.
-    /// Không trả chuột về chỗ cũ — giống hệt người dùng kéo thật.
+    /// Tọa độ Quartz (origin top-left). Chạy nền, mất chưa tới 1 giây.
+    /// Chuột luôn hiện hình và được trả về đúng chỗ cũ; phím Command luôn
+    /// được nhả (kể cả khi tạo event thất bại giữa chừng).
     static func commandDrag(from source: CGPoint, to destination: CGPoint) async {
         await Task.detached(priority: .userInitiated) {
             guard let eventSource = CGEventSource(stateID: .hidSystemState) else {
                 return
             }
 
-            // Đưa chuột tới icon trước để hệ thống "thấy" điểm bắt đầu.
-            guard
-                let mouseMoved = CGEvent(
-                    mouseEventSource: eventSource,
-                    mouseType: .mouseMoved,
-                    mouseCursorPosition: source,
-                    mouseButton: .left
-                )
-            else {
-                return
+            // Giữ chỗ chuột cũ để trả về sau khi kéo xong. Không giấu chuột:
+            // chuột biến mất làm người dùng tưởng app treo.
+            let originalLocation = CGEvent(source: nil)?.location
+            defer {
+                if let originalLocation {
+                    CGWarpMouseCursorPosition(originalLocation)
+                }
             }
-            mouseMoved.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.2)
+
+            func post(_ type: CGEventType, at point: CGPoint, flags: CGEventFlags) {
+                guard
+                    let event = CGEvent(
+                        mouseEventSource: eventSource,
+                        mouseType: type,
+                        mouseCursorPosition: point,
+                        mouseButton: .left
+                    )
+                else {
+                    return
+                }
+                event.flags = flags
+                event.post(tap: .cghidEventTap)
+            }
+
+            // Nhả Command lúc kết thúc dù có chuyện gì xảy ra sau đó.
+            var didPressCommand = false
+            defer {
+                if didPressCommand {
+                    post(.flagsChanged, at: destination, flags: [])
+                }
+            }
+
+            // Đưa chuột tới icon trước để hệ thống "thấy" điểm bắt đầu.
+            post(.mouseMoved, at: source, flags: [])
+            try? await Task.sleep(for: .milliseconds(120))
 
             // Nhấn Command (flagsChanged) như người dùng giữ phím.
-            guard
-                let commandDown = CGEvent(
-                    mouseEventSource: eventSource,
-                    mouseType: .flagsChanged,
-                    mouseCursorPosition: source,
-                    mouseButton: .left
-                )
-            else {
-                return
-            }
-            commandDown.flags = .maskCommand
-            commandDown.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.15)
+            post(.flagsChanged, at: source, flags: .maskCommand)
+            didPressCommand = true
+            try? await Task.sleep(for: .milliseconds(80))
 
-            guard
-                let mouseDown = CGEvent(
-                    mouseEventSource: eventSource,
-                    mouseType: .leftMouseDown,
-                    mouseCursorPosition: source,
-                    mouseButton: .left
-                )
-            else {
-                return
-            }
-            mouseDown.flags = .maskCommand
-            mouseDown.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.2)
+            post(.leftMouseDown, at: source, flags: .maskCommand)
+            try? await Task.sleep(for: .milliseconds(120))
 
-            let steps = 30
+            // ponytail: 15 bước là đủ để hệ thống nhận ra cú kéo;
+            // 30 bước như trước chỉ kéo dài thời gian đơ chuột.
+            let steps = 15
             for index in 1...steps {
                 let progress = CGFloat(index) / CGFloat(steps)
                 let point = CGPoint(
                     x: source.x + (destination.x - source.x) * progress,
                     y: source.y + (destination.y - source.y) * progress
                 )
-                guard
-                    let drag = CGEvent(
-                        mouseEventSource: eventSource,
-                        mouseType: .leftMouseDragged,
-                        mouseCursorPosition: point,
-                        mouseButton: .left
-                    )
-                else {
-                    break
-                }
-                drag.flags = .maskCommand
-                drag.post(tap: .cghidEventTap)
-                Thread.sleep(forTimeInterval: 0.02)
+                post(.leftMouseDragged, at: point, flags: .maskCommand)
+                try? await Task.sleep(for: .milliseconds(15))
             }
 
-            guard
-                let mouseUp = CGEvent(
-                    mouseEventSource: eventSource,
-                    mouseType: .leftMouseUp,
-                    mouseCursorPosition: destination,
-                    mouseButton: .left
-                )
-            else {
-                return
-            }
-            mouseUp.flags = .maskCommand
-            mouseUp.post(tap: .cghidEventTap)
-            Thread.sleep(forTimeInterval: 0.2)
+            post(.leftMouseUp, at: destination, flags: .maskCommand)
+            try? await Task.sleep(for: .milliseconds(150))
 
-            // Nhả Command.
-            guard
-                let commandUp = CGEvent(
-                    mouseEventSource: eventSource,
-                    mouseType: .flagsChanged,
-                    mouseCursorPosition: destination,
-                    mouseButton: .left
-                )
-            else {
-                return
-            }
-            commandUp.flags = []
-            commandUp.post(tap: .cghidEventTap)
-            // Đợi hệ thống commit vị trí mới trước khi trả về.
-            Thread.sleep(forTimeInterval: 0.8)
+            // Nhả Command, đợi hệ thống commit vị trí mới trước khi trả về.
+            post(.flagsChanged, at: destination, flags: [])
+            didPressCommand = false
+            try? await Task.sleep(for: .milliseconds(350))
         }.value
     }
 }

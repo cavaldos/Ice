@@ -17,9 +17,28 @@ struct MenuBarLayoutSettingsPane: View {
     @State private var hiddenDividerX: CGFloat?
     @State private var alwaysHiddenDividerX: CGFloat?
     @State private var anchorY: CGFloat = 0
+    /// Chặn Refresh chồng nhau: quét AX + CGS dồn lại là nguyên nhân giật.
+    @State private var isRefreshing = false
+    /// Chặn kéo-thả chồng nhau: hai cú Command-drag cùng lúc giành chuột.
+    @State private var isMoving = false
+    /// ID các icon đang được di chuyển nền: UI cập nhật lạc quan ngay, badge
+    /// nhỏ trên từng icon cho biết đang đồng bộ, khỏi đơ cả danh sách.
+    @State private var pendingMoves = Set<String>()
+    /// Quét nền đối chiếu vị trí thật, không hiện spinner chung.
+    @State private var isReconciling = false
 
     private var totalCount: Int {
         sections.values.reduce(0) { $0 + $1.count }
+    }
+
+    /// Các nhóm được hiển thị: tắt "Enable always-hidden section" trong
+    /// Advanced thì ẩn luôn nhóm Always Hidden ở đây.
+    private var visibleMetas: [SectionMeta] {
+        if appState.settingsManager.advancedSettingsManager.enableAlwaysHiddenSection {
+            SectionMeta.all
+        } else {
+            SectionMeta.all.filter { $0.kind != .alwaysHidden }
+        }
     }
 
     var body: some View {
@@ -41,9 +60,15 @@ struct MenuBarLayoutSettingsPane: View {
                         await refresh()
                     }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    if isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
                 }
                 .buttonStyle(IceButtonStyle())
+                .disabled(isRefreshing)
             }
 
             if sections.isEmpty {
@@ -63,7 +88,7 @@ struct MenuBarLayoutSettingsPane: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {                        ForEach(SectionMeta.all, id: \.kind) { meta in
+                    VStack(alignment: .leading, spacing: 20) {                        ForEach(visibleMetas, id: \.kind) { meta in
                             sectionView(meta: meta, items: sections[meta.kind] ?? [])
                         }
                         if hiddenDividerX == nil, alwaysHiddenDividerX == nil {
@@ -100,7 +125,7 @@ struct MenuBarLayoutSettingsPane: View {
                         .padding(.vertical, 8)
                 } else {
                     ForEach(items) { item in
-                        itemView(item)
+                        itemView(item, pending: pendingMoves.contains(item.id))
                     }
                 }
             }
@@ -108,14 +133,11 @@ struct MenuBarLayoutSettingsPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onDrop(of: [.text], isTargeted: .constant(false), perform: { providers in
-                guard let provider = providers.first else {
+                guard !isMoving, let provider = providers.first else {
                     return false
                 }
                 _ = provider.loadObject(ofClass: NSString.self) { string, _ in
-                    guard
-                        let idString = string as? String,
-                        let id = UUID(uuidString: idString)
-                    else {
+                    guard let id = string as? String else {
                         return
                     }
                     Task { @MainActor in
@@ -127,7 +149,7 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    private func itemView(_ item: RowItem) -> some View {
+    private func itemView(_ item: RowItem, pending: Bool) -> some View {
         VStack(spacing: 4) {
             if let systemName = item.systemImage {
                 Image(systemName: systemName)
@@ -150,15 +172,30 @@ struct MenuBarLayoutSettingsPane: View {
                 .frame(maxWidth: 76)
         }
         .frame(width: 76)
-        .help(item.subtitle ?? item.title)
+        .help(pending ? "\(item.subtitle ?? item.title) — đang di chuyển…" : (item.subtitle ?? item.title))
+        .opacity(pending ? 0.7 : 1)
+        .overlay(alignment: .topTrailing) {
+            if pending {
+                ProgressView()
+                    .controlSize(.mini)
+                    .padding(4)
+                    .background(.regularMaterial, in: Circle())
+                    .offset(x: 6, y: -6)
+            }
+        }
         .onDrag {
-            NSItemProvider(object: item.id.uuidString as NSString)
+            NSItemProvider(object: item.id as NSString)
         }
     }
 
-    /// Thả item vào nhóm mới: chuyển UI ngay, Command-drag icon thật trên
-    /// menubar tới sát vạch chia đích, rồi quét lại vị trí thật.
-    private func drop(itemID: UUID, to kind: MenuBarItemAXDiscovery.SectionKind) async {
+    /// Thả item vào nhóm mới theo kiểu eventual consistency: UI nhảy ngay
+    /// (kèm badge "đang di chuyển" trên đúng icon đó), cú Command-drag và
+    /// quét đối chiếu chạy nền; vị trí thật về sau sẽ tự khớp lên UI.
+    /// Khung `isMoving` chặn cú kéo thứ hai giành chuột.
+    private func drop(itemID: String, to kind: MenuBarItemAXDiscovery.SectionKind) async {
+        guard !isMoving else {
+            return
+        }
         guard let (item, fromKind) = removeItem(id: itemID) else {
             return
         }
@@ -167,25 +204,42 @@ struct MenuBarLayoutSettingsPane: View {
             sections[kind, default: []].append(item)
             return
         }
-        sections[kind, default: []].append(item)
         guard
             let destination = destinationPoint(for: kind),
-            let frame = item.cocoaFrame
+            let sourceFrame = item.quartzFrame
         else {
             // Không biết thả đâu → quét lại vị trí thật.
             await refresh()
             return
         }
+        isMoving = true
+        pendingMoves.insert(item.id)
+        defer {
+            pendingMoves.remove(item.id)
+            isMoving = false
+        }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            sections[kind, default: []].append(item)
+        }
         await MenuBarItemAXMover.commandDrag(
-            from: CGPoint(x: frame.midX, y: frame.midY),
+            from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
             to: destination
         )
-        try? await Task.sleep(for: .seconds(1))
-        await refresh()
+        // Đối chiếu nền: icon qua đúng nhóm thì xong, chưa thì đợi thêm
+        // chút rồi quét lại (tối đa 3 lần). Quét lặng, không giật UI.
+        for attempt in 0..<3 {
+            await reconcile()
+            if sections[kind]?.contains(where: { $0.id == item.id }) == true {
+                return
+            }
+            if attempt < 2 {
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+        }
     }
 
     /// Gỡ item khỏi nhóm hiện tại, trả về item và nhóm cũ.
-    private func removeItem(id: UUID) -> (RowItem, MenuBarItemAXDiscovery.SectionKind)? {
+    private func removeItem(id: String) -> (RowItem, MenuBarItemAXDiscovery.SectionKind)? {
         for (kind, items) in sections {
             if let index = items.firstIndex(where: { $0.id == id }) {
                 var updated = items
@@ -197,8 +251,10 @@ struct MenuBarLayoutSettingsPane: View {
         return nil
     }
 
-    /// Điểm thả Command-drag cho nhóm đích: trong vùng của nhóm đó,
-    /// cách vạch chia một đoạn để không rơi vào hitbox của vạch.
+    /// Điểm thả Command-drag cho nhóm đích (tọa độ Quartz, origin top-left,
+    /// cùng hệ với `CGEvent`): trong vùng của nhóm đó, cách vạch chia một
+    /// đoạn để không rơi vào hitbox của vạch. Nhóm Hidden nằm giữa hai vạch
+    /// nên thả vào điểm giữa cho chắc ăn.
     private func destinationPoint(for kind: MenuBarItemAXDiscovery.SectionKind) -> CGPoint? {
         switch kind {
         case .visible:
@@ -209,6 +265,9 @@ struct MenuBarLayoutSettingsPane: View {
         case .hidden:
             guard let x = hiddenDividerX else {
                 return nil
+            }
+            if let ahX = alwaysHiddenDividerX, ahX < x {
+                return CGPoint(x: (ahX + x) / 2, y: anchorY)
             }
             return CGPoint(x: x - 24, y: anchorY)
         case .alwaysHidden:
@@ -271,28 +330,78 @@ struct MenuBarLayoutSettingsPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Quét thủ công từ nút Refresh: hiện spinner, chặn bấm chồng.
     private func refresh() async {
-        hasScreenRecordingPermission = ScreenCapture.cachedCheckPermissions(reset: true)
+        // Chặn quét chồng nhau khi bấm Refresh liên tục.
+        guard !isRefreshing else {
+            return
+        }
+        isRefreshing = true
+        defer {
+            isRefreshing = false
+        }
+        await scanAndApply()
+    }
+
+    /// Đối chiếu nền sau cú kéo: cùng một lần quét nhưng lặng lẽ, không
+    /// spinner, không khóa nút — UI cứ mượt, vị trí thật về sau tự khớp.
+    private func reconcile() async {
+        guard !isReconciling else {
+            return
+        }
+        isReconciling = true
+        defer {
+            isReconciling = false
+        }
+        await scanAndApply()
+    }
+
+    /// Một lần quét thật: đọc quyền, cache CGS, phân loại theo vạch chia.
+    private func scanAndApply() async {
+        // Đã có quyền thì dùng cache, khỏi bắt WindowServer đi bộ lại
+        // danh sách window mỗi lần Refresh.
+        if !hasScreenRecordingPermission {
+            hasScreenRecordingPermission = ScreenCapture.cachedCheckPermissions(reset: true)
+        }
         hasAccessibilityPermission = MenuBarItemAXDiscovery.isTrusted()
         if hasScreenRecordingPermission {
             await appState.itemManager.cacheItemsIfNeeded()
         }
 
         let manager = appState.menuBarManager
-        let hiddenX = manager.section(withName: .hidden)?.controlItem.window?.frame.minX
-        let alwaysHiddenX = manager.section(withName: .alwaysHidden)?.controlItem.window?.frame.minX
+        // Vạch chia lúc mới mở máy chưa có window ngay (status item chưa kịp
+        // layout) → minX nil → mọi icon bị xếp nhầm vào Visible. Đợi tối đa
+        // ~2s cho vạch xuất hiện thay vì bắt người dùng bấm Refresh nhiều lần.
+        var hiddenX: CGFloat?
+        var alwaysHiddenX: CGFloat?
+        for _ in 0..<20 {
+            hiddenX = manager.section(withName: .hidden)?.controlItem.window?.frame.minX
+            alwaysHiddenX = manager.section(withName: .alwaysHidden)?.controlItem.window?.frame.minX
+            if hiddenX != nil || alwaysHiddenX != nil {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
         hiddenDividerX = hiddenX
         alwaysHiddenDividerX = alwaysHiddenX
-        // Tung độ thả chuột: giữa vạch chia, fallback giữa menubar.
-        anchorY = manager.section(withName: .hidden)?.controlItem.window?.frame.midY
-            ?? manager.section(withName: .alwaysHidden)?.controlItem.window?.frame.midY
-            ?? (NSScreen.main.map { $0.frame.maxY - 12 } ?? 0)
         func kind(centerX: CGFloat?) -> MenuBarItemAXDiscovery.SectionKind {
             MenuBarItemAXDiscovery.classify(centerX: centerX, hiddenDividerX: hiddenX, alwaysHiddenDividerX: alwaysHiddenX)
         }
 
+        // ID ổn định giữa các lần quét để SwiftUI không vẽ lại cả danh sách
+        // (đỡ giật) và cú kéo-thả kiểm chứng được icon sau khi quét lại.
+        var idCounts = [String: Int]()
+        func stableID(for base: String) -> String {
+            let n = idCounts[base, default: 0]
+            idCounts[base] = n + 1
+            return n == 0 ? base : "\(base)#\(n)"
+        }
+
         let ownBundleID = Bundle.main.bundleIdentifier
         var grouped = [MenuBarItemAXDiscovery.SectionKind: [RowItem]]()
+        // Tung độ Quartz (origin top-left) của menubar = trung vị các icon
+        // thật, khỏi đổi qua lại với tọa độ Cocoa (nhầm là thả trượt).
+        var quartzYs = [CGFloat]()
         let cached = appState.itemManager.itemCache.allItems
         if !cached.isEmpty {
             for item in cached.sorted(by: { $0.frame.minX < $1.frame.minX }) {
@@ -300,8 +409,16 @@ struct MenuBarLayoutSettingsPane: View {
                 guard item.owningApplication?.bundleIdentifier != ownBundleID else {
                     continue
                 }
+                quartzYs.append(item.frame.midY)
                 grouped[kind(centerX: item.frame.midX), default: []].append(
-                    RowItem(title: item.displayName, subtitle: item.subtitle, systemImage: nil, appIcon: item.owningApplication?.icon, cocoaFrame: item.frame)
+                    RowItem(
+                        id: stableID(for: "cgs:\(item.info):\(item.ownerPID)"),
+                        title: item.displayName,
+                        subtitle: item.subtitle,
+                        systemImage: nil,
+                        appIcon: item.owningApplication?.icon,
+                        quartzFrame: item.frame
+                    )
                 )
             }
         } else if hasAccessibilityPermission {
@@ -309,8 +426,6 @@ struct MenuBarLayoutSettingsPane: View {
             let found = await Task.detached(priority: .userInitiated) {
                 MenuBarItemAXDiscovery.discoverItems(in: apps)
             }.value
-            // AX origin top-left → Cocoa origin bottom-left (trục X giữ nguyên).
-            let screenHeight = NSScreen.main?.frame.height ?? 0
             var icons = [pid_t: NSImage]()
             for item in found.sorted(by: { ($0.axFrame?.midX ?? .greatestFiniteMagnitude) < ($1.axFrame?.midX ?? .greatestFiniteMagnitude) }) {
                 let systemImage = MenuBarItemAXDiscovery.systemImageName(forIdentifier: item.identifier)
@@ -323,20 +438,43 @@ struct MenuBarLayoutSettingsPane: View {
                     }
                 }
                 appIcon = icons[item.pid]
-                let cocoaFrame = item.axFrame.map { frame in
-                    CGRect(
-                        x: frame.minX,
-                        y: screenHeight - frame.maxY,
-                        width: frame.width,
-                        height: frame.height
-                    )
+                if let frame = item.axFrame {
+                    quartzYs.append(frame.midY)
                 }
                 grouped[kind(centerX: item.axFrame?.midX), default: []].append(
-                    RowItem(title: item.displayName, subtitle: item.subtitle, systemImage: systemImage, appIcon: appIcon, cocoaFrame: cocoaFrame)
+                    RowItem(
+                        id: stableID(for: "ax:\(item.pid):\(item.bundleID ?? ""):\(item.identifier ?? ""):\(item.title ?? "")"),
+                        title: item.displayName,
+                        subtitle: item.subtitle,
+                        systemImage: systemImage,
+                        appIcon: appIcon,
+                        quartzFrame: item.axFrame
+                    )
                 )
             }
         }
+        if !quartzYs.isEmpty {
+            anchorY = quartzYs.sorted()[quartzYs.count / 2]
+        } else if anchorY == 0 {
+            anchorY = 8
+        }
         sections = grouped
+
+        // Vạch đã hiện trong Settings (isAddedToMenuBar) mà window vẫn chưa
+        // kịp có thì hẹn quét lại một lần, khỏi bắt người dùng bấm tay.
+        if
+            hiddenX == nil, alwaysHiddenX == nil,
+            !grouped.isEmpty,
+            manager.section(withName: .hidden)?.controlItem.isAddedToMenuBar == true
+                || manager.section(withName: .alwaysHidden)?.controlItem.isAddedToMenuBar == true
+        {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                if hiddenDividerX == nil, alwaysHiddenDividerX == nil {
+                    await reconcile()
+                }
+            }
+        }
     }
 
     private static let screenRecordingSettingsURL = URL(
@@ -350,13 +488,16 @@ struct MenuBarLayoutSettingsPane: View {
 // MARK: - Row
 
 private struct RowItem: Identifiable {
-    let id = UUID()
+    /// ID ổn định theo item thật (không phải UUID ngẫu nhiên mỗi lần quét)
+    /// để SwiftUI diff mượt và kiểm chứng được sau khi kéo-thả.
+    let id: String
     let title: String
     let subtitle: String?
     let systemImage: String?
     let appIcon: NSImage?
-    /// Frame theo tọa độ Cocoa, dùng làm điểm bắt đầu khi Command-drag.
-    let cocoaFrame: CGRect?
+    /// Frame theo tọa độ Quartz (origin top-left, cùng hệ `CGEvent`),
+    /// dùng làm điểm bắt đầu khi Command-drag.
+    let quartzFrame: CGRect?
 }
 
 private struct SectionMeta {

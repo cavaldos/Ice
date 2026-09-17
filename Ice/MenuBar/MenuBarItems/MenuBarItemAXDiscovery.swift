@@ -52,6 +52,10 @@ enum MenuBarItemAXDiscovery {
     /// Trục X giống nhau ở cả tọa độ AX lẫn Cocoa (chỉ trục Y bị lật),
     /// nên gọi được cho cả frame AX lẫn frame window CGS.
     ///
+    /// Mỗi vạch được xét độc lập để vẫn đúng khi một section bị tắt
+    /// (vạch tương ứng nil): trái vạch Always-Hidden → alwaysHidden,
+    /// trái vạch Hidden → hidden, còn lại → visible.
+    ///
     /// - Parameters:
     ///   - centerX: Tâm X của item, nil khi không đọc được (về Visible).
     ///   - hiddenDividerX: Cạnh trái (minX) của vạch Hidden, nil khi section tắt.
@@ -64,10 +68,10 @@ enum MenuBarItemAXDiscovery {
         guard let centerX else {
             return .visible
         }
+        if let alwaysHiddenDividerX, centerX < alwaysHiddenDividerX {
+            return .alwaysHidden
+        }
         if let hiddenDividerX, centerX < hiddenDividerX {
-            if let alwaysHiddenDividerX, centerX < alwaysHiddenDividerX {
-                return .alwaysHidden
-            }
             return .hidden
         }
         return .visible
