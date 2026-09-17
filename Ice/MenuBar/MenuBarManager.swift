@@ -54,24 +54,6 @@ final class MenuBarManager: ObservableObject {
         initializeSections()
         configureCancellables()
         iceBarPanel.performSetup()
-        // TEMP DEBUG: tự mở bar hidden 3 lần (8s/40s/100s) bằng flow thật để
-        // bắt trạng thái user sắp xếp. Gỡ trước khi commit.
-        // Bật: defaults write com.jordanbaird.Ice IceBarDebugSnap -bool YES
-        if UserDefaults.standard.bool(forKey: "IceBarDebugSnap") {
-            Task { @MainActor [weak self] in
-                for wait in [8, 28, 56] as [UInt64] {
-                    try? await Task.sleep(for: .seconds(wait))
-                    if let section = self?.section(withName: .hidden) {
-                        Logger.menuBarManager.info("TEMP snap hidden isHidden=\(section.isHidden) state=\(section.controlItem.state) added=\(section.controlItem.isAddedToMenuBar)")
-                        section.show()
-                    } else {
-                        Logger.menuBarManager.info("TEMP snap hidden section MISSING")
-                    }
-                    try? await Task.sleep(for: .seconds(4))
-                    self?.section(withName: .hidden)?.hide()
-                }
-            }
-        }
     }
 
     /// Performs the initial setup of the menu bar manager's sections.

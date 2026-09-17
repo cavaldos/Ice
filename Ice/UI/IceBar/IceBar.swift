@@ -681,14 +681,6 @@ private struct IceBarContentView: View {
         }
         axRows = rows
         Logger.iceBar.debug("axScan done wanted=\(wantedSection) attempt=\(attempt) rows=\(rows.count)")
-        // TEMP DEBUG: chẩn đoán bar thiếu app. Gỡ trước khi commit.
-        Logger.iceBar.info("TEMP axScan wanted=\(wantedSection) found=\(found.count) hiddenX=\(hiddenX as Any) alwaysHiddenX=\(alwaysHiddenX as Any) dividersMissing=\(dividersMissing) rows=\(rows.count)")
-        for item in found {
-            Logger.iceBar.info("TEMP axItem kind=\(kind(centerX: item.axFrame?.midX)) frame=\(item.axFrame.debugDescription) name=\(item.displayName)")
-        }
-        for row in rows {
-            Logger.iceBar.info("TEMP axRow name=\(row.displayName)")
-        }
     }
 
     /// Đóng bar trước rồi nhấn item qua AX (mirror CGS path: close → đợi 25ms
