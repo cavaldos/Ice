@@ -140,6 +140,199 @@ enum MenuBarItemAXDiscovery {
         }
     }
 
+    /// Nhấn (AXPress) menu bar item khớp với pid/identifier/title cho trước.
+    ///
+    /// Dùng cho Ice Bar trên macOS 27: không còn CGS window để temp-show +
+    /// click, nên nhấn trực tiếp qua Accessibility rồi để hệ thống mở menu.
+    /// AXPress không phân biệt trái/phải — hầu hết extras bỏ qua chuột phải
+    /// nên Ice Bar dùng chung một action cho cả hai. Chạy nền (mỗi app có
+    /// thể block tới ~1s theo messaging timeout), trả về true khi đã nhấn.
+    ///
+    /// Không khớp identifier/title nào (item không tên) thì nhấn item đầu
+    /// tiên của app — đủ tốt cho bản đầu, sai số nhỏ hơn bar trống.
+    static func press(pid: pid_t, identifier: String?, title: String?) -> Bool {
+        guard isTrusted() else {
+            return false
+        }
+        let axApp = AXUIElementCreateApplication(pid)
+        // ponytail: timeout ngắn cho mỗi app — một app treo không được
+        // block cả lần nhấn (mặc định hệ thống chờ tới 6s).
+        AXUIElementSetMessagingTimeout(axApp, 1)
+
+        var bar: AnyObject?
+        guard
+            AXUIElementCopyAttributeValue(axApp, "AXExtrasMenuBar" as CFString, &bar) == .success,
+            let bar,
+            CFGetTypeID(bar) == AXUIElementGetTypeID()
+        else {
+            return false
+        }
+        // swiftlint:disable:next force_cast
+        let barElement = bar as! AXUIElement
+        var visited = 0
+        return pressFirstMatch(from: barElement, identifier: identifier, title: title, depth: maxWalkDepth, visited: &visited)
+    }
+
+    /// Đi sâu cây AX và nhấn item đầu tiên khớp identifier/title.
+    ///
+    /// Mirror `collectItems`: bỏ qua cả cây `AXMenu`/`AXMenuItem` (nội dung
+    /// dropdown), `AXMenuBarItem` khớp thì nhấn luôn không đi sâu, element
+    /// bọc ngoài chỉ thử nhấn khi bên trong không có gì nhấn được.
+    private static func pressFirstMatch(
+        from element: AXUIElement,
+        identifier: String?,
+        title: String?,
+        depth: Int,
+        visited: inout Int
+    ) -> Bool {
+        guard depth > 0, visited < maxElementsVisited else {
+            return false
+        }
+        visited += 1
+
+        let role = stringAttribute(kAXRoleAttribute as CFString, of: element)
+
+        guard role != "AXMenu", role != "AXMenuItem" else {
+            return false
+        }
+
+        if role == "AXMenuBarItem" {
+            guard matches(element, identifier: identifier, title: title) else {
+                return false
+            }
+            return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        }
+
+        var children: AnyObject?
+        if
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+            let elements = children as? [AXUIElement],
+            !elements.isEmpty
+        {
+            for child in elements {
+                let pressed = pressFirstMatch(from: child, identifier: identifier, title: title, depth: depth - 1, visited: &visited)
+                if pressed {
+                    return true
+                }
+            }
+        }
+
+        // Không child nào nhấn được → thử chính element này khi nó có identity
+        // khớp (mirror `record` với recordNameless: false).
+        guard matches(element, identifier: identifier, title: title, requireIdentity: true) else {
+            return false
+        }
+        return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+    }
+
+    /// True khi element khớp identifier/title cho trước (nil = không ràng buộc).
+    private static func matches(_ element: AXUIElement, identifier: String?, title: String?, requireIdentity: Bool = false) -> Bool {
+        let candidateID = stringAttribute("AXIdentifier" as CFString, of: element)
+        let candidateTitle = stringAttribute(kAXTitleAttribute as CFString, of: element)
+            ?? stringAttribute(kAXDescriptionAttribute as CFString, of: element)
+            ?? stringAttribute(kAXHelpAttribute as CFString, of: element)
+        if requireIdentity, candidateID == nil, candidateTitle == nil {
+            return false
+        }
+        if let identifier, candidateID != identifier {
+            return false
+        }
+        if let title, candidateTitle != title {
+            return false
+        }
+        return true
+    }
+
+    /// Khung (tọa độ AX, cùng hệ với `AXMenuBarItem.axFrame`) của các vạch
+    /// chia của Ice, tra qua Accessibility.
+    ///
+    /// Trên macOS 27 `NSStatusItem.button.window.frame` trả về rect của spacer
+    /// chứ không phải vị trí chevron, nên Ice Bar không thể dùng nó để phân
+    /// loại section. Vạch được định danh bằng `accessibilityIdentifier` do
+    /// ControlItem tự đặt nên tra cứu này chính xác và không phụ thuộc layout
+    /// của window. Chỉ đọc app của chính mình nên nhanh, gọi nền được.
+    ///
+    /// - Note: Khi spacer đang nở (section ẩn), window của vạch bị park
+    ///   offscreen và frame trả về là rect rác (rộng hàng trăm pt, nằm dưới
+    ///   đáy màn hình). Luôn lọc qua ``isSettledDividerFrame(_:)`` trước khi
+    ///   dùng `minX` để phân loại.
+    static func dividerFrames() -> (hidden: CGRect?, alwaysHidden: CGRect?) {
+        guard isTrusted() else {
+            return (nil, nil)
+        }
+        let axApp = AXUIElementCreateApplication(NSRunningApplication.current.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 1)
+
+        var bar: AnyObject?
+        guard
+            AXUIElementCopyAttributeValue(axApp, "AXExtrasMenuBar" as CFString, &bar) == .success,
+            let bar,
+            CFGetTypeID(bar) == AXUIElementGetTypeID()
+        else {
+            return (nil, nil)
+        }
+        // swiftlint:disable:next force_cast
+        let barElement = bar as! AXUIElement
+        var visited = 0
+        var found = [String: CGRect]()
+        collectDividerFrames(from: barElement, depth: maxWalkDepth, visited: &visited, into: &found)
+        return (found["IceHiddenDivider"], found["IceAlwaysHiddenDivider"])
+    }
+
+    /// Frame AX có trông như vạch chia thật trong menubar không.
+    ///
+    /// Spacer nở (section ẩn) cho frame RỘNG (hàng trăm pt) nhưng minX vẫn
+    /// đúng vị trí chevron và minY vẫn trong dải menubar — giữ lại để lấy
+    /// minX phân loại. Chỉ loại frame rác park offscreen (minY dưới đáy
+    /// màn hình, vd 986) hoặc minX dính mép trái.
+    static func isSettledDividerFrame(_ frame: CGRect) -> Bool {
+        frame.minY <= 100 && frame.minX > 100
+    }
+
+    /// Thu thập khung của các element mang `accessibilityIdentifier` của Ice.
+    ///
+    /// Mirror `collectItems` (bỏ qua cây `AXMenu`/`AXMenuItem`, đi sâu tối đa
+    /// `maxWalkDepth`), nhưng ghi nhận frame theo identifier thay vì dựng item.
+    /// Identifier có thể nằm ở element bọc ngoài hoặc button bên trong — lấy
+    /// frame đầu tiên tìm thấy cho mỗi identifier.
+    private static func collectDividerFrames(
+        from element: AXUIElement,
+        depth: Int,
+        visited: inout Int,
+        into result: inout [String: CGRect]
+    ) {
+        guard depth > 0, visited < maxElementsVisited else {
+            return
+        }
+        visited += 1
+
+        let role = stringAttribute(kAXRoleAttribute as CFString, of: element)
+
+        guard role != "AXMenu", role != "AXMenuItem" else {
+            return
+        }
+
+        if
+            let identifier = stringAttribute("AXIdentifier" as CFString, of: element),
+            identifier == "IceHiddenDivider" || identifier == "IceAlwaysHiddenDivider",
+            result[identifier] == nil,
+            let frame = frame(of: element)
+        {
+            result[identifier] = frame
+        }
+
+        var children: AnyObject?
+        guard
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+            let elements = children as? [AXUIElement]
+        else {
+            return
+        }
+        for child in elements {
+            collectDividerFrames(from: child, depth: depth - 1, visited: &visited, into: &result)
+        }
+    }
+
     /// Số element tối đa được đọc trong một lần quét.
     private static let maxElementsVisited = 256
 

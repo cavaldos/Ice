@@ -186,21 +186,20 @@ final class MenuBarSection {
         }
         switch name {
         case .visible where useIceBar, .hidden where useIceBar:
+            // Ice Bar hiển thị items mà KHÔNG bung menubar: giữ nguyên spacer.
+            // Bar liệt kê những gì AX thấy (dividersMissing → hiện tất cả);
+            // item park sâu không có node AX thì không liệt kê được — đánh đổi
+            // đã chốt theo ý người dùng (menubar không nhô trái).
             Task {
                 if let screenForIceBar {
                     await iceBarPanel?.show(section: .hidden, on: screenForIceBar)
                 }
-                for section in appState.menuBarManager.sections {
-                    section.controlItem.state = .hideItems
-                }
             }
         case .alwaysHidden where useIceBar:
+            // Như trên: bấm Ice icon chỉ hiện bar bên dưới, menubar giữ nguyên.
             Task {
                 if let screenForIceBar {
                     await iceBarPanel?.show(section: .alwaysHidden, on: screenForIceBar)
-                }
-                for section in appState.menuBarManager.sections {
-                    section.controlItem.state = .hideItems
                 }
             }
         case .visible:

@@ -342,7 +342,22 @@ final class MenuBarOverlayPanel: NSPanel {
 
 // MARK: - Content View
 
-private final class MenuBarOverlayPanelContentView: NSView {
+final class MenuBarOverlayPanelContentView: NSView {
+    /// Chiều rộng pill trailing đang vẽ trên display (vùng visible items).
+    ///
+    /// Ice Bar (spacer nở, vạch chia frame rác) dùng để loại items user đang
+    /// thấy sẵn trên menubar. Ưu tiên width đang vẽ, rồi predicted, rồi cache.
+    /// Nil khi chưa đo được — bên gọi hiện tất cả như cũ.
+    static func currentTrailingVisibleWidth(for display: CGDirectDisplayID) -> CGFloat? {
+        loadPersistedTrailingWidths()
+        let width = displayedTrailingWidth[display]
+            ?? predictiveTarget[display]
+            ?? trailingWidthCache[display]?.width
+        guard let width, width > 0 else {
+            return nil
+        }
+        return width
+    }
     /// Last-known trailing status widths per display, shared across panels.
     ///
     /// Panels are recreated on display/space/config changes, so per-view

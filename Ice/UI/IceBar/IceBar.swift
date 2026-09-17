@@ -169,6 +169,12 @@ final class IceBarPanel: NSPanel {
             await appState.imageCache.updateCache()
         }
 
+        // Một show() mới hơn có thể đã chiếm panel trong lúc chờ cache —
+        // bỏ qua, không close (panel giờ thuộc về show đó).
+        guard currentSection == section else {
+            return
+        }
+
         contentView = IceBarHostingView(appState: appState, colorManager: colorManager, screen: screen, section: section) { [weak self] in
             self?.close()
         }
@@ -232,6 +238,45 @@ private final class IceBarHostingView: NSHostingView<AnyView> {
     }
 }
 
+// MARK: - SplitPillShape
+
+/// Stadium pill mirroring the split-shape trailing pill geometry in
+/// `shapePath` (rect body + oval/square end caps), so the Ice Bar clips and
+/// borders exactly like the menu bar pill.
+private struct SplitPillShape: InsettableShape {
+    var leadingEndCap: MenuBarEndCap
+    var trailingEndCap: MenuBarEndCap
+    var insetAmount: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let r = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        var path = Path()
+        guard r.height > 0, r.width > 0 else {
+            return path
+        }
+        path.addRect(CGRect(x: r.minX + r.height / 2, y: r.minY, width: max(0, r.width - r.height), height: r.height))
+        switch leadingEndCap {
+        case .square:
+            path.addRect(CGRect(origin: r.origin, size: CGSize(width: r.height, height: r.height)))
+        case .round:
+            path.addEllipse(in: CGRect(origin: r.origin, size: CGSize(width: r.height, height: r.height)))
+        }
+        switch trailingEndCap {
+        case .square:
+            path.addRect(CGRect(x: r.maxX - r.height, y: r.minY, width: r.height, height: r.height))
+        case .round:
+            path.addEllipse(in: CGRect(x: r.maxX - r.height, y: r.minY, width: r.height, height: r.height))
+        }
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> SplitPillShape {
+        var copy = self
+        copy.insetAmount += amount
+        return copy
+    }
+}
+
 // MARK: - IceBarContentView
 
 private struct IceBarContentView: View {
@@ -242,6 +287,9 @@ private struct IceBarContentView: View {
     @EnvironmentObject var menuBarManager: MenuBarManager
     @State private var frame = CGRect.zero
     @State private var scrollIndicatorsFlashTrigger = 0
+    @State private var axRows = [AXRowItem]()
+    @State private var hasAXPermission = MenuBarItemAXDiscovery.isTrusted()
+    @State private var isLoadingAXRows = false
 
     let screen: NSScreen
     let section: MenuBarSection.Name
@@ -274,11 +322,60 @@ private struct IceBarContentView: View {
     }
 
     private var clipShape: AnyInsettableShape {
-        if configuration.hasRoundedShape {
-            AnyInsettableShape(Capsule())
+        barShape
+    }
+
+    /// Whether the bar mirrors the split-shape trailing pill (same end caps,
+    /// tint opacity, inside border and shadow).
+    private var isSplitPill: Bool {
+        configuration.shapeKind == .split
+    }
+
+    private var barShape: AnyInsettableShape {
+        // Cùng hình stadium với pill trailing của split: thân chữ nhật
+        // cộng 2 đầu oval/chữ nhật theo end caps (mirror `shapePath`).
+        let trailing = configuration.splitShapeInfo.trailing
+        if isSplitPill {
+            return AnyInsettableShape(
+                SplitPillShape(
+                    leadingEndCap: trailing.leadingEndCap,
+                    trailingEndCap: trailing.trailingEndCap
+                )
+            )
+        } else if configuration.hasRoundedShape {
+            return AnyInsettableShape(Capsule())
         } else {
-            AnyInsettableShape(RoundedRectangle(cornerRadius: frame.height / 5, style: .continuous))
+            return AnyInsettableShape(RoundedRectangle(cornerRadius: frame.height / 5, style: .continuous))
         }
+    }
+
+    /// Tint opacity của bar: khớp split, còn lại giữ 0.2 cũ.
+    private var barTintOpacity: Double {
+        isSplitPill ? configuration.current.tintOpacity : 0.2
+    }
+
+    @ViewBuilder
+    private var splitBorderOverlay: some View {
+        // Mirror MenuBarTintView HACK: stroke gấp đôi rồi cắt nửa ngoài đi
+        // bằng clipShape ngay sau đó → viền nằm gọn bên trong pill.
+        if isSplitPill, configuration.current.hasBorder {
+            barShape.stroke(
+                Color(cgColor: configuration.current.borderColor),
+                lineWidth: CGFloat(configuration.current.borderWidth) * 2
+            )
+        }
+    }
+
+    private var barShadowColor: Color {
+        if isSplitPill {
+            configuration.current.hasShadow ? .black.opacity(0.5) : .clear
+        } else {
+            .black.opacity(shadowOpacity)
+        }
+    }
+
+    private var barShadowRadius: CGFloat {
+        isSplitPill ? 5 : 2.5
     }
 
     private var shadowOpacity: CGFloat {
@@ -291,12 +388,13 @@ private struct IceBarContentView: View {
                 .frame(height: contentHeight)
                 .padding(.horizontal, horizontalPadding)
                 .padding(.vertical, verticalPadding)
-                .layoutBarStyle(appState: appState, averageColorInfo: colorManager.colorInfo)
+                .layoutBarStyle(appState: appState, averageColorInfo: colorManager.colorInfo, tintOpacity: barTintOpacity, useLiveBlur: isSplitPill)
                 .foregroundStyle(colorManager.colorInfo?.color.brightness ?? 0 > 0.67 ? .black : .white)
+                .overlay(splitBorderOverlay)
                 .clipShape(clipShape)
-                .shadow(color: .black.opacity(shadowOpacity), radius: 2.5)
+                .shadow(color: barShadowColor, radius: barShadowRadius)
 
-            if configuration.current.hasBorder {
+            if configuration.current.hasBorder, !isSplitPill {
                 clipShape
                     .inset(by: configuration.current.borderWidth / 2)
                     .stroke(lineWidth: configuration.current.borderWidth)
@@ -311,7 +409,14 @@ private struct IceBarContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        if !ScreenCapture.cachedCheckPermissions() {
+        if itemManager.isItemDiscoveryUnavailable {
+            // macOS 27+: CGS không còn per-item windows — hiện icon app và
+            // nhấn qua Accessibility thay vì ảnh chụp window + temp-show.
+            axFallbackView
+                .task {
+                    await loadAXRows()
+                }
+        } else if !ScreenCapture.cachedCheckPermissions() {
             HStack {
                 Text("The Ice Bar requires screen recording permissions.")
 
@@ -328,9 +433,6 @@ private struct IceBarContentView: View {
             .padding(.horizontal, 10)
         } else if menuBarManager.isMenuBarHiddenBySystemUserDefaults {
             Text("Ice cannot display menu bar items for automatically hidden menu bars")
-                .padding(.horizontal, 10)
-        } else if itemManager.isItemDiscoveryUnavailable {
-            Text("This feature is under development and will be released soon")
                 .padding(.horizontal, 10)
         } else if imageCache.cacheFailed(for: section) {
             Text("Unable to display menu bar items")
@@ -349,6 +451,253 @@ private struct IceBarContentView: View {
             .task {
                 scrollIndicatorsFlashTrigger += 1
             }
+        }
+    }
+
+    // MARK: - AX fallback (macOS 27+)
+
+    /// Hàng icon cho Ice Bar khi CGS không còn per-item windows.
+    private struct AXRowItem: Identifiable {
+        /// ID ổn định giữa các lần quét (không phải UUID ngẫu nhiên) để
+        /// SwiftUI diff mượt.
+        let id: String
+        let pid: pid_t
+        let identifier: String?
+        let title: String?
+        let displayName: String
+        let systemImage: String?
+        let appIcon: NSImage?
+        /// Tâm X (tọa độ AX) để lọc visible, nil khi không đọc được frame.
+        let midX: CGFloat?
+    }
+
+    private static let accessibilitySettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    )!
+
+    @ViewBuilder
+    private var axFallbackView: some View {
+        if !hasAXPermission {
+            HStack {
+                Text("The Ice Bar requires accessibility permission.")
+
+                Button {
+                    NSWorkspace.shared.open(Self.accessibilitySettingsURL)
+                } label: {
+                    Text("Open System Settings")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.link)
+
+                Button {
+                    hasAXPermission = MenuBarItemAXDiscovery.isTrusted()
+                    if hasAXPermission {
+                        Task {
+                            await loadAXRows()
+                        }
+                    }
+                } label: {
+                    Text("Check Again")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.link)
+            }
+            .padding(.horizontal, 10)
+        } else if isLoadingAXRows && axRows.isEmpty {
+            ProgressView()
+                .padding(.horizontal, 10)
+        } else if axRows.isEmpty {
+            Text("Unable to display menu bar items")
+                .padding(.horizontal, 10)
+        } else {
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(axRows) { row in
+                        axRowView(row)
+                    }
+                }
+            }
+            .defaultScrollAnchor(.trailing)
+            .scrollIndicatorsFlash(trigger: scrollIndicatorsFlashTrigger)
+            .task {
+                scrollIndicatorsFlashTrigger += 1
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func axRowView(_ row: AXRowItem) -> some View {
+        Button {
+            press(row)
+        } label: {
+            if let systemName = row.systemImage {
+                Image(systemName: systemName)
+                    .font(.system(size: 16))
+                    .frame(minWidth: 28, minHeight: 22)
+            } else if let icon = row.appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 22)
+            } else if let title = row.title, !title.isEmpty {
+                Text(title)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+            } else {
+                Text(row.displayName)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .help(row.displayName)
+        .accessibilityLabel(row.displayName)
+        .accessibilityAction(named: "press") {
+            press(row)
+        }
+    }
+
+    /// Quét AX cho section đang mở, lọc bằng cùng cách phân loại theo vạch
+    /// chia như Menu Bar Layout. Vạch chưa kịp layout (nil hết) thì hiện tất
+    /// cả thay vì trả về bar rỗng.
+    ///
+    /// Quét tối đa 3 lần, cách nhau ~0.8s: trên macOS 27 layout menubar cần
+    /// thời gian để vạch chia ổn định sau khi show section; lần quét đầu có
+    /// thể gặp frame rác của spacer đang park.
+    private func loadAXRows() async {
+        guard !isLoadingAXRows else {
+            return
+        }
+        isLoadingAXRows = true
+        defer {
+            isLoadingAXRows = false
+        }
+
+        hasAXPermission = MenuBarItemAXDiscovery.isTrusted()
+        guard hasAXPermission else {
+            return
+        }
+
+        for attempt in 0..<3 {
+            await scanAXRowsOnce(attempt: attempt)
+            if !axRows.isEmpty || Task.isCancelled {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(800))
+        }
+    }
+
+    /// Một lần quét AX: liệt kê items, lọc theo section, dựng rows.
+    private func scanAXRowsOnce(attempt: Int) async {
+        // NSWorkspace phải đọc trên main; discovery nặng chạy nền. Vị trí vạch
+        // chia cũng tra nền qua AX (cùng hệ tọa độ với axFrame).
+        let apps = NSWorkspace.shared.runningApplications
+        let wantedSection = section
+
+        let (found, axDividers) = await Task.detached(priority: .userInitiated) {
+            (
+                MenuBarItemAXDiscovery.discoverItems(in: apps),
+                MenuBarItemAXDiscovery.dividerFrames()
+            )
+        }.value
+
+        // Vạch chia ưu tiên qua AX, nhưng LOẠI frame rác của spacer đang park
+        // (rộng hàng trăm pt dưới đáy màn hình) — minX của nó (vd 7.0) mà lọt
+        // vào phân loại thì mọi item dạt hết về Visible và bar rỗng.
+        // button.window.frame trên macOS 27 cũng trả về rect spacer (minX = 0)
+        // nên chỉ dùng làm fallback khi AX thiếu và giá trị hợp lệ (minX > 0).
+        func settledMinX(_ frame: CGRect?) -> CGFloat? {
+            frame.flatMap { MenuBarItemAXDiscovery.isSettledDividerFrame($0) ? $0.minX : nil }
+        }
+        func saneMinX(_ value: CGFloat?) -> CGFloat? {
+            value.flatMap { $0 > 0 ? $0 : nil }
+        }
+        let hiddenX = settledMinX(axDividers.hidden)
+            ?? saneMinX(menuBarManager.section(withName: .hidden)?.controlItem.window?.frame.minX)
+        let alwaysHiddenX = settledMinX(axDividers.alwaysHidden)
+            ?? saneMinX(menuBarManager.section(withName: .alwaysHidden)?.controlItem.window?.frame.minX)
+
+        func kind(centerX: CGFloat?) -> MenuBarItemAXDiscovery.SectionKind {
+            MenuBarItemAXDiscovery.classify(centerX: centerX, hiddenDividerX: hiddenX, alwaysHiddenDividerX: alwaysHiddenX)
+        }
+        let dividersMissing = hiddenX == nil && alwaysHiddenX == nil
+
+        // ID ổn định giữa các lần quét để SwiftUI không vẽ lại cả danh sách.
+        var idCounts = [String: Int]()
+        func stableID(for base: String) -> String {
+            let n = idCounts[base, default: 0]
+            idCounts[base] = n + 1
+            return n == 0 ? base : "\(base)#\(n)"
+        }
+
+        // Discovery trả về theo tên; xếp lại trái→phải như trên menubar.
+        let ordered = found.sorted {
+            ($0.axFrame?.midX ?? .greatestFiniteMagnitude) < ($1.axFrame?.midX ?? .greatestFiniteMagnitude)
+        }
+        var icons = [pid_t: NSImage]()
+        var rows = [AXRowItem]()
+        for item in ordered {
+            // Bar hiện gộp hidden + alwaysHidden (loại visible): vạch chia
+            // lúc spacer nở không đủ tin để tách 2 section, và ý người dùng
+            // là một bar duy nhất cho mọi app bị ẩn.
+            if !dividersMissing, kind(centerX: item.axFrame?.midX) == .visible {
+                continue
+            }
+            // Cùng cách chọn icon như Menu Bar Layout: system extras quen thuộc
+            // dùng SF Symbol (icon theo PID sẽ ra icon chung của MenuBarAgent).
+            let systemImage = MenuBarItemAXDiscovery.systemImageName(forIdentifier: item.identifier)
+            if systemImage == nil, icons[item.pid] == nil {
+                if item.bundleID == "com.apple.TextInputMenuAgent" {
+                    icons[item.pid] = MenuBarItemAXDiscovery.inputSourceIcon()
+                } else {
+                    icons[item.pid] = NSRunningApplication(processIdentifier: item.pid)?.icon
+                }
+            }
+            rows.append(
+                AXRowItem(
+                    id: stableID(for: "ax:\(item.pid):\(item.bundleID ?? ""):\(item.identifier ?? ""):\(item.title ?? "")"),
+                    pid: item.pid,
+                    identifier: item.identifier,
+                    title: item.title,
+                    displayName: item.displayName,
+                    systemImage: systemImage,
+                    appIcon: icons[item.pid],
+                    midX: item.axFrame?.midX
+                )
+            )
+        }
+        // Spacer nở (vạch chia frame rác): loại items đã hiện sẵn trong vùng
+        // pill trailing — user đang thấy chúng trên menubar. Chỉ lọc khi mất
+        // cả hai vạch; vạch còn dùng được thì phân loại theo section như cũ.
+        // Fullscreen bỏ qua (pill không vẽ, width cũ).
+        if dividersMissing,
+           !appState.isActiveSpaceFullscreen,
+           let trailingWidth = MenuBarOverlayPanelContentView.currentTrailingVisibleWidth(for: screen.displayID),
+           trailingWidth > 0, trailingWidth < screen.frame.width
+        {
+            let visibleMinX = screen.frame.maxX - trailingWidth
+            rows.removeAll { ($0.midX ?? .greatestFiniteMagnitude) >= visibleMinX - 4 }
+        }
+        axRows = rows
+        Logger.iceBar.debug("axScan done wanted=\(wantedSection) attempt=\(attempt) rows=\(rows.count)")
+        // TEMP DEBUG: chẩn đoán bar thiếu app. Gỡ trước khi commit.
+        Logger.iceBar.info("TEMP axScan wanted=\(wantedSection) found=\(found.count) hiddenX=\(hiddenX as Any) alwaysHiddenX=\(alwaysHiddenX as Any) dividersMissing=\(dividersMissing) rows=\(rows.count)")
+        for item in found {
+            Logger.iceBar.info("TEMP axItem kind=\(kind(centerX: item.axFrame?.midX)) frame=\(item.axFrame.debugDescription) name=\(item.displayName)")
+        }
+        for row in rows {
+            Logger.iceBar.info("TEMP axRow name=\(row.displayName)")
+        }
+    }
+
+    /// Đóng bar trước rồi nhấn item qua AX (mirror CGS path: close → đợi 25ms
+    /// → click). Chạy nền vì mỗi app có thể block tới ~1s.
+    private func press(_ row: AXRowItem) {
+        closePanel()
+        Task.detached(priority: .userInitiated) {
+            try? await Task.sleep(for: .milliseconds(25))
+            _ = MenuBarItemAXDiscovery.press(pid: row.pid, identifier: row.identifier, title: row.title)
         }
     }
 }
@@ -493,4 +842,10 @@ private struct IceBarItemClickView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) { }
+}
+
+// MARK: - Logger
+
+private extension Logger {
+    static let iceBar = Logger(category: "IceBar")
 }

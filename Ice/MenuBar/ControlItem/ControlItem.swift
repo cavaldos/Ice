@@ -375,6 +375,18 @@ final class ControlItem {
         }
         button.target = self
         button.action = #selector(performAction)
+        // Định danh AX cho vạch chia để tra vị trí qua Accessibility
+        // (MenuBarItemAXDiscovery.dividerFrames): trên macOS 27
+        // button.window.frame trả về rect của spacer chứ không phải vị trí
+        // chevron, nên Ice Bar không thể dùng nó để phân loại section.
+        switch identifier {
+        case .hidden:
+            button.setAccessibilityIdentifier("IceHiddenDivider")
+        case .alwaysHidden:
+            button.setAccessibilityIdentifier("IceAlwaysHiddenDivider")
+        case .iceIcon:
+            break
+        }
     }
 
     /// Updates the appearance of the status item using the given hiding state.

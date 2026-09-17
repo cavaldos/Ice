@@ -191,13 +191,7 @@ struct GeneralSettingsPane: View {
                 BetaBadge()
             }
         }
-            .annotation {
-                if appState.itemManager.isItemDiscoveryUnavailable {
-                    Text("This feature is under development and will be released soon")
-                } else {
-                    Text("Show hidden menu bar items in a separate bar below the menu bar")
-                }
-            }
+            .annotation("Show hidden menu bar items in a separate bar below the menu bar")
     }
 
     @ViewBuilder
