@@ -12,6 +12,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
 ![Requirements](https://img.shields.io/badge/requirements-macOS%2014%2B-fa4e49?style=flat-square)
 [![Sponsor](https://img.shields.io/badge/Sponsor%20%E2%9D%A4%EF%B8%8F-8A2BE2?style=flat-square)](https://ko-fi.com/calvados)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=flat-square&logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/nnkhanh29)
 [![Website](https://img.shields.io/badge/Website-015FBA?style=flat-square)](https://icemenubar.app)
 [![License](https://img.shields.io/github/license/cavaldos/Ice?style=flat-square)](LICENSE)
 
@@ -58,11 +59,14 @@ Our goal is to make Ice feel fast, predictable, and unobtrusive — a tool that 
 
 ## Gallery
 
+**Demo Always Hidden**
+
+![Demo ](Resources/vid/demo-ah.gif)
+
 **Demo**
 
 ![Demo ](Resources/vid/demo.gif)
 
-![Demo ](Resources/vid/demomaos27.gif)
 
 | Ice Bar                                                                                     | Drag & drop layout                                                                                  |
 | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -80,6 +84,10 @@ Contributions are welcome! Please read the [contribution guidelines](./Resources
 
 <a href="https://ko-fi.com/calvados" target="_blank">
     <img src="https://storage.ko-fi.com/cdn/kofi5.png?v=6" alt="Support me on Ko-fi" style="height: 36px !important;width: 130px !important;">
+</a>
+
+<a href="https://www.paypal.com/paypalme/nnkhanh29" target="_blank">
+    <img src="https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_200x51.png" alt="Donate with PayPal" style="height: 36px !important;">
 </a>
 
 ## Acknowledgments
