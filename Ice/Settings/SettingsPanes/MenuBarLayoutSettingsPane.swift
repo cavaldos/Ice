@@ -88,7 +88,8 @@ struct MenuBarLayoutSettingsPane: View {
                 }
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {                        ForEach(visibleMetas, id: \.kind) { meta in
+                    VStack(alignment: .leading, spacing: 20) {
+                        ForEach(visibleMetas, id: \.kind) { meta in
                             sectionView(meta: meta, items: sections[meta.kind] ?? [])
                         }
                         if hiddenDividerX == nil, alwaysHiddenDividerX == nil {
