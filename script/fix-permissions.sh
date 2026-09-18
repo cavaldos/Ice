@@ -54,7 +54,7 @@ done
 
 echo
 echo "relaunching Ice"
-open -a "$APP"
+open "$APP"
 sleep 3
 pgrep -x Ice >/dev/null 2>&1 || echo "warning: Ice did not start"
 
