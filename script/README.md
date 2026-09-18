@@ -17,6 +17,15 @@ Local dev and release helpers. Run from the repository root.
 
 Install SwiftLint first if needed: `brew install swiftlint`.
 
+## After installing a build
+
+```bash
+# Clear stale TCC entries so Accessibility / Screen Recording can be re-granted
+./script/fix-permissions.sh [/path/to/Ice.app]
+```
+
+Ad-hoc signed builds are pinned to a `cdhash` that changes with every build, so the grant recorded for the previous binary stops matching — System Settings shows the toggle on while the app is denied. See [Permissions](../README.md#permissions).
+
 ## Every release (2 commands)
 
 Automated releases so users get Sparkle update notifications — no manual version edits.
