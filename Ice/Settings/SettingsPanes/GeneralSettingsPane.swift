@@ -344,7 +344,7 @@ struct GeneralSettingsPane: View {
             tempItemSpacingOffset = manager.itemSpacingOffset
         }
         .onChange(of: manager.itemSpacingOffset) { _, newValue in
-            // Giữ slider đồng bộ nếu offset đổi từ nơi khác.
+            // Keep the slider in sync if the offset changes elsewhere.
             if !isApplyingOffset {
                 tempItemSpacingOffset = newValue
             }
@@ -409,8 +409,9 @@ struct GeneralSettingsPane: View {
                     isPresentingLogoutPrompt = true
                 }
             } catch {
-                // Relaunch lỗi nhưng `defaults write` đã xong → giữ giá trị
-                // mới (đúng với hệ thống). Chỉ revert khi ghi defaults lỗi.
+                // Relaunch failed but `defaults write` already succeeded, so keep
+                // the new value (it matches the system). Only revert when the
+                // defaults write itself failed.
                 if error is MenuBarItemSpacingManager.GroupedRelaunchError {
                     tempItemSpacingOffset = newOffset
                 } else {

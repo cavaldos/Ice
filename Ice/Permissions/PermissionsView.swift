@@ -46,8 +46,9 @@ struct PermissionsView: View {
             guard let window else {
                 return
             }
-            // Cho đóng cửa sổ để Skip (chỉ khóa miniaturize); app đã setup
-            // ở nền nên đóng lúc nào cũng an toàn.
+            // Allow closing the window to Skip (only miniaturize is locked);
+            // the app is already set up in the background so closing is safe
+            // at any time.
             window.styleMask.remove([.miniaturizable])
             if let contentView = window.contentView {
                 with(contentView.safeAreaInsets) { insets in

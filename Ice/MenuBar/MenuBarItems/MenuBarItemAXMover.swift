@@ -5,31 +5,32 @@
 
 import Cocoa
 
-/// Di chuyển menu bar item bằng cách giả lập Command-drag của người dùng.
+/// Moves a menu bar item by simulating the user's Command-drag.
 ///
-/// Pipeline move cũ của Ice cần CGS window (windowID, ownerPID, frame change)
-/// nên không còn hoạt động trên macOS 27. Cách này chỉ cần vị trí icon trên
-/// màn hình và quyền Accessibility — đúng thao tác mà người dùng vẫn làm
-/// bằng tay, nên hệ thống vẫn nhận.
+/// Ice's old move pipeline needed a CGS window (windowID, ownerPID, frame change),
+/// so it no longer works on macOS 27. This approach only needs the icon's
+/// on-screen position plus Accessibility permission — exactly what the user
+/// would do by hand, so the system still honors it.
 ///
-/// Tọa độ Quartz (origin top-left, cùng hệ với `CGEvent.location`,
-/// `WindowInfo.frame` và `AXUIElement` frame) — KHÔNG dùng tọa độ Cocoa
-/// (origin bottom-left) ở đây, nhầm là thả trượt rồi quét lại thấy vị trí
-/// cũ (tưởng "tự quay lại").
+/// Quartz coordinates (origin top-left, same system as `CGEvent.location`,
+/// `WindowInfo.frame`, and `AXUIElement` frames) — do NOT use Cocoa coordinates
+/// (origin bottom-left) here; mixing them up drops the item in the wrong spot
+/// and a rescan then shows the old position (looking like it "snapped back").
 enum MenuBarItemAXMover {
-    /// Kéo từ `source` tới `destination` trong khi giữ Command.
+    /// Drags from `source` to `destination` while holding Command.
     ///
-    /// Tọa độ Quartz (origin top-left). Chạy nền, mất chưa tới 1 giây.
-    /// Chuột luôn hiện hình và được trả về đúng chỗ cũ; phím Command luôn
-    /// được nhả (kể cả khi tạo event thất bại giữa chừng).
+    /// Quartz coordinates (origin top-left). Runs in the background, takes well
+    /// under a second. The cursor stays visible and is returned to its original
+    /// spot; the Command key is always released (even if event creation fails
+    /// midway).
     static func commandDrag(from source: CGPoint, to destination: CGPoint) async {
         await Task.detached(priority: .userInitiated) {
             guard let eventSource = CGEventSource(stateID: .hidSystemState) else {
                 return
             }
 
-            // Giữ chỗ chuột cũ để trả về sau khi kéo xong. Không giấu chuột:
-            // chuột biến mất làm người dùng tưởng app treo.
+            // Remember the old cursor position to restore after the drag. Don't hide
+            // the cursor: a disappearing cursor makes users think the app hung.
             let originalLocation = CGEvent(source: nil)?.location
             defer {
                 if let originalLocation {
@@ -52,7 +53,7 @@ enum MenuBarItemAXMover {
                 event.post(tap: .cghidEventTap)
             }
 
-            // Nhả Command lúc kết thúc dù có chuyện gì xảy ra sau đó.
+            // Release Command on exit no matter what happens below.
             var didPressCommand = false
             defer {
                 if didPressCommand {
@@ -60,11 +61,11 @@ enum MenuBarItemAXMover {
                 }
             }
 
-            // Đưa chuột tới icon trước để hệ thống "thấy" điểm bắt đầu.
+            // Move the cursor onto the icon first so the system "sees" the start point.
             post(.mouseMoved, at: source, flags: [])
             try? await Task.sleep(for: .milliseconds(120))
 
-            // Nhấn Command (flagsChanged) như người dùng giữ phím.
+            // Press Command (flagsChanged) as if the user is holding the key.
             post(.flagsChanged, at: source, flags: .maskCommand)
             didPressCommand = true
             try? await Task.sleep(for: .milliseconds(80))
@@ -72,8 +73,8 @@ enum MenuBarItemAXMover {
             post(.leftMouseDown, at: source, flags: .maskCommand)
             try? await Task.sleep(for: .milliseconds(120))
 
-            // ponytail: 15 bước là đủ để hệ thống nhận ra cú kéo;
-            // 30 bước như trước chỉ kéo dài thời gian đơ chuột.
+            // ponytail: 15 steps are enough for the system to register the drag;
+            // 30 steps as before only prolong the cursor freeze.
             let steps = 15
             for index in 1...steps {
                 let progress = CGFloat(index) / CGFloat(steps)
@@ -88,7 +89,8 @@ enum MenuBarItemAXMover {
             post(.leftMouseUp, at: destination, flags: .maskCommand)
             try? await Task.sleep(for: .milliseconds(150))
 
-            // Nhả Command, đợi hệ thống commit vị trí mới trước khi trả về.
+            // Release Command and wait for the system to commit the new position
+            // before restoring the cursor.
             post(.flagsChanged, at: destination, flags: [])
             didPressCommand = false
             try? await Task.sleep(for: .milliseconds(350))

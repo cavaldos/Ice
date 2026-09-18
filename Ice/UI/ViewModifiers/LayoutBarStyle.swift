@@ -17,8 +17,9 @@ extension View {
                 Color.black
             } else if useLiveBlur {
                 // Mirror MenuBarOverlayPanel.updateChrome: live .menu blur
-                // dưới lớp tint thay vì mẫu màu trung bình tĩnh — bar đứng
-                // trên wallpaper nên blur sống mới trùng split pill.
+                // under the tint instead of a static average-color sample —
+                // the bar sits on the wallpaper so only live blur matches
+                // the split pill.
                 let current = appState.appearanceManager.configuration.current
                 if !(current.blurAmount <= 0 || (current.tintKind != .none && current.tintOpacity >= 1)) {
                     VisualEffectView(material: .menu, blendingMode: .behindWindow)

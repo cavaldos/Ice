@@ -17,26 +17,27 @@ struct MenuBarLayoutSettingsPane: View {
     @State private var hiddenDividerX: CGFloat?
     @State private var alwaysHiddenDividerX: CGFloat?
     @State private var anchorY: CGFloat = 0
-    /// Chặn Refresh chồng nhau: quét AX + CGS dồn lại là nguyên nhân giật.
+    /// Guards against overlapping Refreshes: stacked AX + CGS scans cause stutter.
     @State private var isRefreshing = false
-    /// Chặn kéo-thả chồng nhau: hai cú Command-drag cùng lúc giành chuột.
+    /// Guards against overlapping drags: two concurrent Command-drags would fight over the mouse.
     @State private var isMoving = false
-    /// ID các icon đang được di chuyển nền: UI cập nhật lạc quan ngay, badge
-    /// nhỏ trên từng icon cho biết đang đồng bộ, khỏi đơ cả danh sách.
+    /// IDs of icons currently being moved in the background: the UI updates
+    /// optimistically right away, with a small badge on each icon showing
+    /// it's syncing, so the whole list doesn't freeze.
     @State private var pendingMoves = Set<String>()
-    /// Icon đang được hover khi kéo: viền xanh cho biết thả vào đây sẽ chèn
-    /// vào trước nó. Đồng thời để section biết drop này đã có item nhận
-    /// (tránh cả item lẫn section cùng xử lý một cú thả).
+    /// Icon hovered during a drag: the blue outline shows dropping here inserts
+    /// before it. Also lets the section know this drop already has an item
+    /// handling it (so item and section don't both handle the same drop).
     @State private var dropTargetID: String?
-    /// Quét nền đối chiếu vị trí thật, không hiện spinner chung.
+    /// Background scan reconciling real positions, without the shared spinner.
     @State private var isReconciling = false
 
     private var totalCount: Int {
         sections.values.reduce(0) { $0 + $1.count }
     }
 
-    /// Các nhóm được hiển thị: tắt "Enable always-hidden section" trong
-    /// Advanced thì ẩn luôn nhóm Always Hidden ở đây.
+    /// Displayed groups: with "Enable always-hidden section" off in
+    /// Advanced, the Always Hidden group stays hidden here too.
     private var visibleMetas: [SectionMeta] {
         if appState.settingsManager.advancedSettingsManager.enableAlwaysHiddenSection {
             SectionMeta.all
@@ -108,14 +109,16 @@ struct MenuBarLayoutSettingsPane: View {
         }
         .padding(20)
         .task {
-            // Vẽ ngay từ cache có sẵn (timer 5s nền vẫn bơm itemCache),
-            // rồi mới quét nền đối chiếu — mở tab là thấy icon, khỏi bấm Refresh.
+            // Paint immediately from the available cache (the 5s background timer
+            // keeps pumping itemCache), then reconcile with a background scan —
+            // opening the tab shows icons right away, no Refresh tap needed.
             applySnapshotFromCache()
             await refresh()
         }
         .onReceive(appState.itemManager.$itemCache) { _ in
-            // Cache đổi (timer nền, app mới mở, kéo-thả xong) thì UI theo luôn.
-            // Đang kéo thì giữ UI lạc quan, đợi reconcile ghi đè.
+            // When the cache changes (background timer, newly opened app,
+            // finished drag), the UI follows. While dragging, keep the
+            // optimistic UI and let reconcile overwrite it.
             guard !isMoving else {
                 return
             }
@@ -134,8 +137,8 @@ struct MenuBarLayoutSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
             FlowLayout(spacing: 8) {
-                // Ô "New" nét đứt đầu nhóm Visible: chỗ icon mới xuất hiện,
-                // giống ảnh mẫu (canh phải nên nó nằm trái nhất).
+                // Dashed "New" cell at the head of the Visible group: where newly
+                // appeared icons land, matching the mock (right-aligned, so it sits leftmost).
                 if meta.kind == .visible {
                     newItemPlaceholder
                 }
@@ -154,8 +157,8 @@ struct MenuBarLayoutSettingsPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onDrop(of: [.text], isTargeted: .constant(false), perform: { providers in
-                // Đang hover trên một icon thì để item đó nhận (chèn theo vị
-                // trí), section chỉ nhận khi thả vào khoảng trống (về cuối nhóm).
+                // When hovering an icon, let that item handle the drop (positional
+                // insert); the section only handles drops into empty space (append to the group's end).
                 guard dropTargetID == nil, !isMoving, let provider = providers.first else {
                     return false
                 }
@@ -192,8 +195,8 @@ struct MenuBarLayoutSettingsPane: View {
                             .frame(width: 40, height: 30)
                     }
                 }
-                // Icon hệ thống (bundle com.apple.*) gắn thêm logo Apple
-                // góc trên-phải để phân biệt như ảnh mẫu.
+                // System icons (com.apple.* bundles) get an extra Apple logo badge
+                // at the top-right corner for distinction, as in the mock.
                 if item.isSystem {
                     Image(systemName: "apple.logo")
                         .font(.system(size: 7, weight: .bold))
@@ -213,7 +216,7 @@ struct MenuBarLayoutSettingsPane: View {
         .help(pending ? "\(item.subtitle ?? item.title) — đang di chuyển…" : (item.subtitle ?? item.title))
         .opacity(pending ? 0.7 : 1)
         .overlay {
-            // Viền xanh khi kéo hover lên: thả ra sẽ chèn vào trước icon này.
+            // Blue outline on drag hover: releasing inserts before this icon.
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(isDropTarget ? .blue : .clear, lineWidth: 2)
                 .frame(width: 52, height: 56)
@@ -250,8 +253,8 @@ struct MenuBarLayoutSettingsPane: View {
         )
     }
 
-    /// Binding hover cho một icon: kéo tới thì viền xanh, section nhường
-    /// drop này cho item (chèn theo vị trí thay vì về cuối nhóm).
+    /// Hover binding for one icon: dragging over it shows the blue outline, and
+    /// the section yields this drop to the item (positional insert instead of appending to the group's end).
     private func dropTargetBinding(for id: String) -> Binding<Bool> {
         Binding(
             get: { dropTargetID == id },
@@ -265,7 +268,7 @@ struct MenuBarLayoutSettingsPane: View {
         )
     }
 
-    /// Ô "New" nét đứt ở đầu nhóm Visible: vị trí icon mới xuất hiện.
+    /// Dashed "New" cell at the head of the Visible group: where newly appeared icons land.
     private var newItemPlaceholder: some View {
         VStack(spacing: 3) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -285,10 +288,11 @@ struct MenuBarLayoutSettingsPane: View {
         .help("New menu bar items appear here")
     }
 
-    /// Thả item vào nhóm mới theo kiểu eventual consistency: UI nhảy ngay
-    /// (kèm badge "đang di chuyển" trên đúng icon đó), cú Command-drag và
-    /// quét đối chiếu chạy nền; vị trí thật về sau sẽ tự khớp lên UI.
-    /// Khung `isMoving` chặn cú kéo thứ hai giành chuột.
+    /// Drop an item into a new group with eventual consistency: the UI jumps
+    /// immediately (with a "moving" badge on that exact icon) while the
+    /// Command-drag and the reconcile scan run in the background; the real
+    /// position catches up onto the UI afterwards.
+    /// The `isMoving` guard blocks a second drag from fighting over the mouse.
     private func drop(itemID: String, to kind: MenuBarItemAXDiscovery.SectionKind) async {
         guard !isMoving else {
             return
@@ -297,7 +301,7 @@ struct MenuBarLayoutSettingsPane: View {
             return
         }
         guard fromKind != kind else {
-            // Thả về đúng nhóm cũ thì trả lại chỗ cũ.
+            // Dropped back into its original group; put it back where it was.
             sections[kind, default: []].append(item)
             return
         }
@@ -305,7 +309,7 @@ struct MenuBarLayoutSettingsPane: View {
             let destination = destinationPoint(for: kind),
             let sourceFrame = item.quartzFrame
         else {
-            // Không biết thả đâu → quét lại vị trí thật.
+            // No drop target known — re-scan for the real positions.
             await refresh()
             return
         }
@@ -322,8 +326,8 @@ struct MenuBarLayoutSettingsPane: View {
             from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
             to: destination
         )
-        // Đối chiếu nền: icon qua đúng nhóm thì xong, chưa thì đợi thêm
-        // chút rồi quét lại (tối đa 3 lần). Quét lặng, không giật UI.
+        // Reconcile in the background: done once the icon lands in the right
+        // group, otherwise wait a bit and re-scan (up to 3 tries). Silent scans, no UI stutter.
         for attempt in 0..<3 {
             await reconcile()
             if sections[kind]?.contains(where: { $0.id == item.id }) == true {
@@ -335,7 +339,7 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    /// Gỡ item khỏi nhóm hiện tại, trả về item và nhóm cũ.
+    /// Remove the item from its current group, returning the item and its old group.
     private func removeItem(id: String) -> (RowItem, MenuBarItemAXDiscovery.SectionKind)? {
         guard let found = findItem(id: id) else {
             return nil
@@ -346,8 +350,8 @@ struct MenuBarLayoutSettingsPane: View {
         return (found.item, found.kind)
     }
 
-    /// Tìm item theo ID ổn định, trả về item + nhóm + vị trí trong nhóm
-    /// (nhóm đã xếp trái→phải như trên menubar).
+    /// Find an item by stable ID, returning the item + group + index within the group
+    /// (groups are already ordered left-to-right as on the menu bar).
     private func findItem(id: String) -> (item: RowItem, kind: MenuBarItemAXDiscovery.SectionKind, index: Int)? {
         for (kind, items) in sections {
             if let index = items.firstIndex(where: { $0.id == id }) {
@@ -357,9 +361,9 @@ struct MenuBarLayoutSettingsPane: View {
         return nil
     }
 
-    /// Thả một icon lên một icon khác: chèn vào trước icon đích (cùng zone
-    /// là sắp xếp lại thứ tự, khác zone là chuyển zone đúng vị trí).
-    /// UI nhảy ngay, Command-drag chạy nền, quét đối chiếu khớp vị trí thật.
+    /// Drop one icon onto another: insert before the target icon (same zone
+    /// means reordering, different zone means moving zones at the right position).
+    /// The UI jumps immediately, the Command-drag runs in the background, and the reconcile scan matches the real positions.
     private func drop(itemID: String, onto targetID: String) async {
         guard !isMoving else {
             return
@@ -379,8 +383,8 @@ struct MenuBarLayoutSettingsPane: View {
             await refresh()
             return
         }
-        // Gỡ nguồn trước rồi tính vị trí chèn sau khi dồn (kéo xuôi thì
-        // index đích lùi 1 vì mảng đã ngắn đi).
+        // Remove the source first, then compute the insert position after
+        // compaction (dragging forward shifts the target index down by 1 because the array is now shorter).
         var withoutSource = sections[fromKind] ?? []
         withoutSource.remove(at: fromIndex)
         sections[fromKind] = withoutSource
@@ -413,15 +417,15 @@ struct MenuBarLayoutSettingsPane: View {
             to: destination
         )
         if fromKind == toKind {
-            // Cùng zone: phân loại không đổi nên chỉ cần quét lại cho order
-            // thật đè lên order lạc quan (2 lần cách nhau để hệ thống commit).
+            // Same zone: classification is unchanged, so just re-scan to let the
+            // real order overwrite the optimistic order (twice, spaced out, to let the system commit).
             await reconcile()
             try? await Task.sleep(for: .milliseconds(400))
             await reconcile()
             return
         }
-        // Khác zone: icon qua đúng nhóm thì xong, chưa thì đợi thêm chút
-        // rồi quét lại (tối đa 3 lần). Quét lặng, không giật UI.
+        // Different zone: done once the icon lands in the right group,
+        // otherwise wait a bit and re-scan (up to 3 tries). Silent scans, no UI stutter.
         for attempt in 0..<3 {
             await reconcile()
             if sections[toKind]?.contains(where: { $0.id == item.id }) == true {
@@ -433,9 +437,10 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    /// Điểm thả Command-drag để chèn vào khe giữa hai frame kề (tọa độ
-    /// Quartz): giữa khe nếu có cả hai, lệch 12pt từ mép nếu ở đầu/cuối.
-    /// Kẹp trong biên zone khi biết vạch chia để không rơi sang zone khác.
+    /// Command-drag drop point for inserting into the gap between two adjacent
+    /// frames (Quartz coordinates): mid-gap when both exist, 12pt offset from
+    /// the edge at the ends. Clamped inside the zone bounds when the dividers
+    /// are known, so the drop can't fall into another zone.
     private func reorderDestination(
         for kind: MenuBarItemAXDiscovery.SectionKind,
         leftFrame: CGRect?,
@@ -465,7 +470,7 @@ struct MenuBarLayoutSettingsPane: View {
         return destinationPoint(for: kind)
     }
 
-    /// Biên trái của zone (minX vạch chia bên trái), nil khi không rõ.
+    /// Left bound of the zone (minX of the divider on the left), nil when unknown.
     private func leftBound(for kind: MenuBarItemAXDiscovery.SectionKind) -> CGFloat? {
         switch kind {
         case .visible:
@@ -477,7 +482,7 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    /// Biên phải của zone (minX vạch chia bên phải), nil khi không rõ.
+    /// Right bound of the zone (minX of the divider on the right), nil when unknown.
     private func rightBound(for kind: MenuBarItemAXDiscovery.SectionKind) -> CGFloat? {
         switch kind {
         case .visible:
@@ -489,10 +494,10 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    /// Điểm thả Command-drag cho nhóm đích (tọa độ Quartz, origin top-left,
-    /// cùng hệ với `CGEvent`): trong vùng của nhóm đó, cách vạch chia một
-    /// đoạn để không rơi vào hitbox của vạch. Nhóm Hidden nằm giữa hai vạch
-    /// nên thả vào điểm giữa cho chắc ăn.
+    /// Command-drag drop point for the destination group (Quartz coordinates,
+    /// top-left origin, same system as `CGEvent`): inside that group's region,
+    /// offset from the divider so it doesn't land in the divider's hitbox. The
+    /// Hidden group sits between two dividers, so drop at the midpoint to be safe.
     private func destinationPoint(for kind: MenuBarItemAXDiscovery.SectionKind) -> CGPoint? {
         switch kind {
         case .visible:
@@ -568,9 +573,9 @@ struct MenuBarLayoutSettingsPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Quét thủ công từ nút Refresh: hiện spinner, chặn bấm chồng.
+    /// Manual scan from the Refresh button: shows the spinner, blocks overlapping taps.
     private func refresh() async {
-        // Chặn quét chồng nhau khi bấm Refresh liên tục.
+        // Guard against overlapping scans when Refresh is tapped repeatedly.
         guard !isRefreshing else {
             return
         }
@@ -581,8 +586,8 @@ struct MenuBarLayoutSettingsPane: View {
         await scanAndApply()
     }
 
-    /// Đối chiếu nền sau cú kéo: cùng một lần quét nhưng lặng lẽ, không
-    /// spinner, không khóa nút — UI cứ mượt, vị trí thật về sau tự khớp.
+    /// Background reconcile after a drag: the same scan but silent — no
+    /// spinner, no button lock — the UI stays smooth and the real positions catch up afterwards.
     private func reconcile() async {
         guard !isReconciling else {
             return
@@ -594,9 +599,9 @@ struct MenuBarLayoutSettingsPane: View {
         await scanAndApply()
     }
 
-    /// Vạch chia đọc nhanh, đồng bộ: ưu tiên AX (process của chính mình,
-    /// không đi bộ cả hệ thống), fallback window.frame khi AX chưa có.
-    /// Cùng cách Ice Bar dùng để không bị frame rác của spacer park offscreen.
+    /// Fast synchronous divider read: prefers AX (own process, no system-wide
+    /// walk), falls back to window.frame when AX isn't available yet.
+    /// Same approach Ice Bar uses to avoid junk frames from the offscreen spacer park.
     private func resolveDividers() -> (hiddenX: CGFloat?, alwaysHiddenX: CGFloat?) {
         let axDividers = MenuBarItemAXDiscovery.dividerFrames()
         func settledMinX(_ frame: CGRect?) -> CGFloat? {
@@ -613,8 +618,8 @@ struct MenuBarLayoutSettingsPane: View {
         return (hiddenX, alwaysHiddenX)
     }
 
-    /// Dựng sections từ cache CGS có sẵn + vạch chia hiện tại, không quét.
-    /// Gọi đồng bộ khi mở tab và khi $itemCache đổi để UI hiện ngay.
+    /// Build sections from the available CGS cache + current dividers, without scanning.
+    /// Called synchronously when opening the tab and when $itemCache changes so the UI appears immediately.
     private func applySnapshotFromCache() {
         hasAccessibilityPermission = MenuBarItemAXDiscovery.isTrusted()
         let (hiddenX, alwaysHiddenX) = resolveDividers()
@@ -625,8 +630,8 @@ struct MenuBarLayoutSettingsPane: View {
             alwaysHiddenX: alwaysHiddenX,
             axFallback: []
         )
-        // Cache còn trống (máy mới boot, timer chưa bơm) thì giữ sections cũ
-        // để khỏi nháy về màn hình chờ; lần quét nền sẽ điền sau.
+        // Cache still empty (fresh boot, timer hasn't pumped yet): keep the old
+        // sections so the UI doesn't flash back to the placeholder; the background scan will fill it in.
         if !grouped.isEmpty {
             sections = grouped
         }
@@ -637,8 +642,8 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
-    /// Dựng nhóm icon từ cache CGS theo đúng thứ tự menubar (trái→phải theo
-    /// tâm X). Trả về nhóm + tung độ giữa để làm điểm thả Command-drag.
+    /// Build icon groups from the CGS cache in true menu bar order (left-to-right
+    /// by center X). Returns the groups + mid-Y to use as the Command-drag drop point.
     private func buildSections(
         hiddenX: CGFloat?,
         alwaysHiddenX: CGFloat?,
@@ -656,8 +661,8 @@ struct MenuBarLayoutSettingsPane: View {
         let ownBundleID = Bundle.main.bundleIdentifier
         var grouped = [MenuBarItemAXDiscovery.SectionKind: [RowItem]]()
         var quartzYs = [CGFloat]()
-        // CGS và AX cùng xếp theo tâm X tăng dần = trái→phải trên menubar,
-        // khớp thứ tự Clock nằm phải nhất như ngoài thật.
+        // Both CGS and AX sort by ascending center X = left-to-right on the menu
+        // bar, matching the real-world order with Clock at the far right.
         let cached = appState.itemManager.itemCache.allItems
             .filter { $0.owningApplication?.bundleIdentifier != ownBundleID }
             .sorted { $0.frame.midX < $1.frame.midX }
@@ -710,24 +715,24 @@ struct MenuBarLayoutSettingsPane: View {
         return (grouped, midY)
     }
 
-    /// Một lần quét thật: đọc quyền, cache CGS, phân loại theo vạch chia.
+    /// One real scan: read permissions, CGS cache, classify by dividers.
     private func scanAndApply() async {
-        // Đã có quyền thì dùng cache, khỏi bắt WindowServer đi bộ lại
-        // danh sách window mỗi lần Refresh.
+        // With permission already granted, use the cache instead of making
+        // WindowServer walk the window list again on every Refresh.
         if !hasScreenRecordingPermission {
             hasScreenRecordingPermission = ScreenCapture.cachedCheckPermissions(reset: true)
         }
         hasAccessibilityPermission = MenuBarItemAXDiscovery.isTrusted()
-        // Vẽ tạm từ cache cũ trước để không trắng màn hình trong lúc đợi.
+        // Paint a temporary frame from the old cache first so the screen doesn't go blank while waiting.
         applySnapshotFromCache()
         if hasScreenRecordingPermission {
             await appState.itemManager.cacheItemsIfNeeded()
         }
 
         let manager = appState.menuBarManager
-        // Vạch chia lúc mới mở máy chưa có window ngay → minX nil → mọi icon
-        // bị xếp nhầm vào Visible. Ưu tiên AX nhanh, chỉ đợi tối đa ~2s khi
-        // cả hai vạch đều mất thay vì bắt người dùng bấm Refresh nhiều lần.
+        // Dividers have no window right after boot → minX is nil → every icon
+        // would be misclassified as Visible. Prefer fast AX, waiting at most ~2s
+        // only when both dividers are missing, instead of making the user hit Refresh repeatedly.
         var (hiddenX, alwaysHiddenX) = resolveDividers()
         if hiddenX == nil, alwaysHiddenX == nil {
             for _ in 0..<20 {
@@ -758,8 +763,8 @@ struct MenuBarLayoutSettingsPane: View {
             anchorY = 8
         }
 
-        // Vạch đã hiện trong Settings (isAddedToMenuBar) mà window vẫn chưa
-        // kịp có thì hẹn quét lại một lần, khỏi bắt người dùng bấm tay.
+        // When the divider already shows in Settings (isAddedToMenuBar) but its
+        // window hasn't appeared yet, schedule one re-scan so the user doesn't have to tap manually.
         if
             hiddenX == nil, alwaysHiddenX == nil,
             !grouped.isEmpty,
@@ -786,17 +791,17 @@ struct MenuBarLayoutSettingsPane: View {
 // MARK: - Row
 
 private struct RowItem: Identifiable {
-    /// ID ổn định theo item thật (không phải UUID ngẫu nhiên mỗi lần quét)
-    /// để SwiftUI diff mượt và kiểm chứng được sau khi kéo-thả.
+    /// Stable ID tied to the real item (not a random UUID per scan)
+    /// so SwiftUI diffs smoothly and the item stays verifiable after drag-and-drop.
     let id: String
     let title: String
     let subtitle: String?
     let systemImage: String?
     let appIcon: NSImage?
-    /// true khi bundle com.apple.*: gắn badge  logo Apple như ảnh mẫu.
+    /// true for com.apple.* bundles: attaches the Apple logo badge as in the mock.
     let isSystem: Bool
-    /// Frame theo tọa độ Quartz (origin top-left, cùng hệ `CGEvent`),
-    /// dùng làm điểm bắt đầu khi Command-drag.
+    /// Frame in Quartz coordinates (top-left origin, same system as `CGEvent`),
+    /// used as the start point for a Command-drag.
     let quartzFrame: CGRect?
 }
 
@@ -818,8 +823,8 @@ private struct SectionMeta {
 
 // MARK: - FlowLayout
 
-/// Xếp subviews thành nhiều hàng, tự xuống dòng khi hết chỗ.
-/// Canh phải từng hàng để giống menubar thật (icon dồn về mép phải).
+/// Lay out subviews into multiple rows, wrapping when out of space.
+/// Right-align each row to match the real menu bar (icons packed against the right edge).
 private struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 
@@ -846,7 +851,7 @@ private struct FlowLayout: Layout {
         var indices = [Int]()
         var y: CGFloat = 0
         var height: CGFloat = 0
-        /// Độ dời để dồn hàng về mép phải (= khoảng trống còn lại).
+        /// Offset that packs the row against the right edge (= the remaining space).
         var trailingOffset: CGFloat = 0
         var width: CGFloat = 0
     }
@@ -858,7 +863,7 @@ private struct FlowLayout: Layout {
         var x: CGFloat = 0
         var y: CGFloat = 0
         func finishRow() {
-            // Hàng chưa full thì đẩy hết về phải cho giống menubar.
+            // Push incomplete rows fully right to match the menu bar.
             if maxWidth.isFinite {
                 current.trailingOffset = max(0, maxWidth - current.width)
             }

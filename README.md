@@ -67,14 +67,18 @@ Our goal is to make Ice feel fast, predictable, and unobtrusive — a tool that 
 
 ![Demo ](Resources/vid/demo.gif)
 
+**Fullscreen settings**
+
+![Fullscreen settings](Resources/Image/fullscreen.png)
+
 
 | Ice Bar                                                                                     | Drag & drop layout                                                                                  |
 | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| ![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b) | ![Menu Bar Layout](https://github.com/user-attachments/assets/095442ba-f2d0-4bb4-9632-91e26ef8d45b) |
+| ![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b) | ![Menu Bar Layout](./Resources/Image/MenuBarLayout.png) |
 
 | Appearance settings                                                                                     | Item spacing                                                                                              |
 | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| ![Menu Bar Appearance](https://github.com/user-attachments/assets/8c22c185-c3d2-49bb-971e-e1fc17df04b3) | ![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6) |
+| ![Menu Bar Appearance](./Resources/Image/MenuBarAppearance.png) | ![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6) |
 
 ## Contributing
 

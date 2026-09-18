@@ -87,12 +87,12 @@ struct SettingsView: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// Items chính phía trên gạch ngăn, giống nhóm General/Behavior/Menu Bar/Displays của Pelmet.
+    /// Primary items above the divider, mirroring Pelmet's General/Behavior/Menu Bar/Displays group.
     private var mainIdentifiers: [SettingsNavigationIdentifier] {
         SettingsNavigationIdentifier.allCases.filter { $0 != .about }
     }
 
-    /// Items phụ phía dưới gạch ngăn, giống nhóm Thanks/About của Pelmet.
+    /// Secondary items below the divider, mirroring Pelmet's Thanks/About group.
     private var secondaryIdentifiers: [SettingsNavigationIdentifier] {
         [.about]
     }
@@ -127,8 +127,8 @@ struct SettingsView: View {
     }
 }
 
-/// Một hàng sidebar kiểu Pelmet: thường thì icon xám + chữ trắng,
-/// đang chọn thì pill xanh mờ + icon/chữ xanh.
+/// A Pelmet-style sidebar row: gray icon + white text by default,
+/// translucent blue pill + blue icon/text when selected.
 private struct SettingsSidebarItem: View {
     let identifier: SettingsNavigationIdentifier
     let icon: IconResource

@@ -199,8 +199,9 @@ final class AppState: ObservableObject {
         // updateStatusItem/add-remove cycle at boot.
         settingsManager.performSetup()
         configureCancellables()
-        // Chỉ dừng check khi đã đủ quyền; nếu Skip khi còn thiếu thì giữ
-        // timer để tự nhận ra khi user grant sau trong Settings.
+        // Only stop checking once all permissions are granted; if the user
+        // skipped while some are still missing, keep the timer so we notice
+        // when they grant later in Settings.
         if permissionsManager.permissionsState != .missingPermissions {
             permissionsManager.stopAllChecks()
         }

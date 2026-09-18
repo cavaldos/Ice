@@ -7,59 +7,59 @@ import ApplicationServices
 import Carbon.HIToolbox
 import Cocoa
 
-/// Liệt kê menu bar items qua Accessibility (`AXExtrasMenuBar`).
+/// Lists menu bar items via Accessibility (`AXExtrasMenuBar`).
 ///
-/// Cách này chỉ cần quyền Accessibility, không cần Screen Recording,
-/// và vẫn hoạt động khi `CGSGetProcessMenuBarWindowList` không còn trả về
-/// per-item windows (macOS 27+) — cùng cách mà Thaw dùng.
+/// This only needs Accessibility permission, not Screen Recording,
+/// and still works when `CGSGetProcessMenuBarWindowList` no longer returns
+/// per-item windows (macOS 27+) — the same approach Thaw uses.
 enum MenuBarItemAXDiscovery {
-    /// Một menu bar item đọc được qua Accessibility.
+    /// A menu bar item read via Accessibility.
     struct AXMenuBarItem: Hashable {
-        /// Process identifier của app sở hữu item. Dùng để lấy app icon.
+        /// Process identifier of the app owning the item. Used to fetch the app icon.
         let pid: pid_t
 
-        /// Tên hiển thị của app sở hữu item.
+        /// Display name of the app owning the item.
         let appName: String
 
-        /// Bundle identifier của app sở hữu item.
+        /// Bundle identifier of the app owning the item.
         let bundleID: String?
 
-        /// `AXIdentifier` của item (vd `com.apple.menuextra.wifi`).
+        /// `AXIdentifier` of the item (e.g. `com.apple.menuextra.wifi`).
         let identifier: String?
 
-        /// Tiêu đề/mô tả của item (có thể nil với icon thuần).
+        /// Title/description of the item (may be nil for icon-only items).
         let title: String?
 
-        /// Frame raw của item theo tọa độ AX (origin top-left).
-        /// Convert sang tọa độ Cocoa khi phân loại.
+        /// Raw frame of the item in AX coordinates (top-left origin).
+        /// Convert to Cocoa coordinates when classifying.
         let axFrame: CGRect?
 
-        /// Tên chi tiết nhất để hiển thị.
+        /// Most descriptive name for display.
         var displayName: String {
             title ?? identifier ?? appName
         }
     }
 
-    /// Nhóm menubar mà một item đang thuộc về.
+    /// The menubar group an item currently belongs to.
     enum SectionKind: Hashable {
         case visible
         case hidden
         case alwaysHidden
     }
 
-    /// Phân loại item theo vị trí ngang của nó so với các vạch chia của Ice.
+    /// Classifies an item by its horizontal position relative to Ice's dividers.
     ///
-    /// Trục X giống nhau ở cả tọa độ AX lẫn Cocoa (chỉ trục Y bị lật),
-    /// nên gọi được cho cả frame AX lẫn frame window CGS.
+    /// The X axis is identical in both AX and Cocoa coordinates (only the Y axis is flipped),
+    /// so this works for both AX frames and CGS window frames.
     ///
-    /// Mỗi vạch được xét độc lập để vẫn đúng khi một section bị tắt
-    /// (vạch tương ứng nil): trái vạch Always-Hidden → alwaysHidden,
-    /// trái vạch Hidden → hidden, còn lại → visible.
+    /// Each divider is evaluated independently so this stays correct when a section is disabled
+    /// (its divider is nil): left of the Always-Hidden divider → alwaysHidden,
+    /// left of the Hidden divider → hidden, otherwise → visible.
     ///
     /// - Parameters:
-    ///   - centerX: Tâm X của item, nil khi không đọc được (về Visible).
-    ///   - hiddenDividerX: Cạnh trái (minX) của vạch Hidden, nil khi section tắt.
-    ///   - alwaysHiddenDividerX: Cạnh trái của vạch Always Hidden, nil khi section tắt.
+    ///   - centerX: X center of the item, nil when unreadable (falls back to Visible).
+    ///   - hiddenDividerX: Left edge (minX) of the Hidden divider, nil when the section is disabled.
+    ///   - alwaysHiddenDividerX: Left edge of the Always Hidden divider, nil when the section is disabled.
     static func classify(
         centerX: CGFloat?,
         hiddenDividerX: CGFloat?,
@@ -77,15 +77,15 @@ enum MenuBarItemAXDiscovery {
         return .visible
     }
 
-    /// Trả về true khi app đã được cấp quyền Accessibility.
+    /// Returns true when the app has been granted Accessibility permission.
     static func isTrusted() -> Bool {
         AXIsProcessTrusted()
     }
 
-    /// Icon của input source đang dùng (bộ gõ/chữ trên menubar).
+    /// Icon of the current input source (the keyboard/layout indicator on the menubar).
     ///
-    /// Dùng cho item của TextInputMenuAgent — app này không có icon riêng,
-    /// icon thật trên menubar chính là icon của input source hiện tại.
+    /// Used for the TextInputMenuAgent item — that app has no icon of its own,
+    /// the real icon on the menubar is the current input source's icon.
     static func inputSourceIcon() -> NSImage? {
         let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         guard let pointer = TISGetInputSourceProperty(source, kTISPropertyIconImageURL) else {
@@ -95,10 +95,10 @@ enum MenuBarItemAXDiscovery {
         return NSImage(contentsOf: url)
     }
 
-    /// SF Symbol cho các system menu extras quen thuộc.
+    /// SF Symbol for familiar system menu extras.
     ///
-    /// Các item này thường bị host bởi MenuBarAgent nên app icon lấy theo
-    /// PID sẽ ra icon chung chung, không đúng.
+    /// These items are usually hosted by MenuBarAgent, so resolving the app icon by
+    /// PID yields a generic, incorrect icon.
     static func systemImageName(forIdentifier identifier: String?) -> String? {
         switch identifier {
         case "com.apple.menuextra.wifi": "wifi"
@@ -113,16 +113,16 @@ enum MenuBarItemAXDiscovery {
         }
     }
 
-    /// Liệt kê tất cả menu bar items của các app đang chạy.
+    /// Lists all menu bar items of running apps.
     ///
-    /// - Parameter apps: Các app cần quét. Truyền `NSWorkspace.shared.runningApplications`
-    ///   từ main thread.
-    /// - Returns: Danh sách item, sắp xếp theo tên hiển thị.
+    /// - Parameter apps: The apps to scan. Pass `NSWorkspace.shared.runningApplications`
+    ///   from the main thread.
+    /// - Returns: The item list, sorted by display name.
     static func discoverItems(in apps: [NSRunningApplication]) -> [AXMenuBarItem] {
         guard isTrusted() else {
             return []
         }
-        // Bỏ icon của chính Ice (các vạch chia) khỏi danh sách.
+        // Drops Ice's own icons (the dividers) from the list.
         let ownBundleID = Bundle.main.bundleIdentifier
         var result = [AXMenuBarItem]()
         var visited = 0
@@ -140,23 +140,23 @@ enum MenuBarItemAXDiscovery {
         }
     }
 
-    /// Nhấn (AXPress) menu bar item khớp với pid/identifier/title cho trước.
+    /// Presses (AXPress) the menu bar item matching the given pid/identifier/title.
     ///
-    /// Dùng cho Ice Bar trên macOS 27: không còn CGS window để temp-show +
-    /// click, nên nhấn trực tiếp qua Accessibility rồi để hệ thống mở menu.
-    /// AXPress không phân biệt trái/phải — hầu hết extras bỏ qua chuột phải
-    /// nên Ice Bar dùng chung một action cho cả hai. Chạy nền (mỗi app có
-    /// thể block tới ~1s theo messaging timeout), trả về true khi đã nhấn.
+    /// Used for the Ice Bar on macOS 27: with no CGS window left for temp-show +
+    /// click, press directly via Accessibility and let the system open the menu.
+    /// AXPress does not distinguish left/right — most extras ignore right-click,
+    /// so the Ice Bar shares one action for both. Runs in the background (each app may
+    /// block up to ~1s per the messaging timeout); returns true once pressed.
     ///
-    /// Không khớp identifier/title nào (item không tên) thì nhấn item đầu
-    /// tiên của app — đủ tốt cho bản đầu, sai số nhỏ hơn bar trống.
+    /// When nothing matches the identifier/title (a nameless item), presses the app's first
+    /// item — good enough for a first pass, with less error than an empty bar.
     static func press(pid: pid_t, identifier: String?, title: String?) -> Bool {
         guard isTrusted() else {
             return false
         }
         let axApp = AXUIElementCreateApplication(pid)
-        // ponytail: timeout ngắn cho mỗi app — một app treo không được
-        // block cả lần nhấn (mặc định hệ thống chờ tới 6s).
+        // ponytail: short timeout per app — one hung app must not block
+        // the whole press (the system default waits up to 6s).
         AXUIElementSetMessagingTimeout(axApp, 1)
 
         var bar: AnyObject?
@@ -173,11 +173,11 @@ enum MenuBarItemAXDiscovery {
         return pressFirstMatch(from: barElement, identifier: identifier, title: title, depth: maxWalkDepth, visited: &visited)
     }
 
-    /// Đi sâu cây AX và nhấn item đầu tiên khớp identifier/title.
+    /// Walks the AX tree and presses the first item matching identifier/title.
     ///
-    /// Mirror `collectItems`: bỏ qua cả cây `AXMenu`/`AXMenuItem` (nội dung
-    /// dropdown), `AXMenuBarItem` khớp thì nhấn luôn không đi sâu, element
-    /// bọc ngoài chỉ thử nhấn khi bên trong không có gì nhấn được.
+    /// Mirrors `collectItems`: skips the whole `AXMenu`/`AXMenuItem` tree (dropdown
+    /// contents); presses a matching `AXMenuBarItem` immediately without descending;
+    /// only tries pressing a wrapper element when nothing inside is pressable.
     private static func pressFirstMatch(
         from element: AXUIElement,
         identifier: String?,
@@ -217,15 +217,15 @@ enum MenuBarItemAXDiscovery {
             }
         }
 
-        // Không child nào nhấn được → thử chính element này khi nó có identity
-        // khớp (mirror `record` với recordNameless: false).
+        // No child was pressable → try this element itself when it has a matching identity
+        // (mirrors `record` with recordNameless: false).
         guard matches(element, identifier: identifier, title: title, requireIdentity: true) else {
             return false
         }
         return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
     }
 
-    /// True khi element khớp identifier/title cho trước (nil = không ràng buộc).
+    /// True when the element matches the given identifier/title (nil = unconstrained).
     private static func matches(_ element: AXUIElement, identifier: String?, title: String?, requireIdentity: Bool = false) -> Bool {
         let candidateID = stringAttribute("AXIdentifier" as CFString, of: element)
         let candidateTitle = stringAttribute(kAXTitleAttribute as CFString, of: element)
@@ -243,19 +243,19 @@ enum MenuBarItemAXDiscovery {
         return true
     }
 
-    /// Khung (tọa độ AX, cùng hệ với `AXMenuBarItem.axFrame`) của các vạch
-    /// chia của Ice, tra qua Accessibility.
+    /// Frames (in AX coordinates, same system as `AXMenuBarItem.axFrame`) of Ice's
+    /// dividers, looked up via Accessibility.
     ///
-    /// Trên macOS 27 `NSStatusItem.button.window.frame` trả về rect của spacer
-    /// chứ không phải vị trí chevron, nên Ice Bar không thể dùng nó để phân
-    /// loại section. Vạch được định danh bằng `accessibilityIdentifier` do
-    /// ControlItem tự đặt nên tra cứu này chính xác và không phụ thuộc layout
-    /// của window. Chỉ đọc app của chính mình nên nhanh, gọi nền được.
+    /// On macOS 27 `NSStatusItem.button.window.frame` returns the spacer's rect
+    /// rather than the chevron position, so the Ice Bar cannot use it to classify
+    /// sections. Dividers are identified by the `accessibilityIdentifier` set by
+    /// ControlItem itself, so this lookup is exact and independent of window
+    /// layout. It only reads our own app, so it is fast and safe to call in the background.
     ///
-    /// - Note: Khi spacer đang nở (section ẩn), window của vạch bị park
-    ///   offscreen và frame trả về là rect rác (rộng hàng trăm pt, nằm dưới
-    ///   đáy màn hình). Luôn lọc qua ``isSettledDividerFrame(_:)`` trước khi
-    ///   dùng `minX` để phân loại.
+    /// - Note: When the spacer is expanded (section hidden), the divider's window is parked
+    ///   offscreen and the returned frame is a junk rect (hundreds of pt wide, below
+    ///   the bottom of the screen). Always filter via ``isSettledDividerFrame(_:)`` before
+    ///   using `minX` for classification.
     static func dividerFrames() -> (hidden: CGRect?, alwaysHidden: CGRect?) {
         guard isTrusted() else {
             return (nil, nil)
@@ -279,22 +279,22 @@ enum MenuBarItemAXDiscovery {
         return (found["IceHiddenDivider"], found["IceAlwaysHiddenDivider"])
     }
 
-    /// Frame AX có trông như vạch chia thật trong menubar không.
+    /// Whether an AX frame looks like a real divider in the menubar.
     ///
-    /// Spacer nở (section ẩn) cho frame RỘNG (hàng trăm pt) nhưng minX vẫn
-    /// đúng vị trí chevron và minY vẫn trong dải menubar — giữ lại để lấy
-    /// minX phân loại. Chỉ loại frame rác park offscreen (minY dưới đáy
-    /// màn hình, vd 986) hoặc minX dính mép trái.
+    /// An expanded spacer (hidden section) yields a WIDE frame (hundreds of pt), but minX still
+    /// matches the chevron position and minY still falls within the menubar band — keep it to read
+    /// minX for classification. Only discards junk frames parked offscreen (minY below the
+    /// screen bottom, e.g. 986) or minX stuck at the left edge.
     static func isSettledDividerFrame(_ frame: CGRect) -> Bool {
         frame.minY <= 100 && frame.minX > 100
     }
 
-    /// Thu thập khung của các element mang `accessibilityIdentifier` của Ice.
+    /// Collects frames of elements carrying Ice's `accessibilityIdentifier`.
     ///
-    /// Mirror `collectItems` (bỏ qua cây `AXMenu`/`AXMenuItem`, đi sâu tối đa
-    /// `maxWalkDepth`), nhưng ghi nhận frame theo identifier thay vì dựng item.
-    /// Identifier có thể nằm ở element bọc ngoài hoặc button bên trong — lấy
-    /// frame đầu tiên tìm thấy cho mỗi identifier.
+    /// Mirrors `collectItems` (skips the `AXMenu`/`AXMenuItem` tree, descends at most
+    /// `maxWalkDepth`), but records frames by identifier instead of building items.
+    /// The identifier may live on the wrapper element or the inner button — takes the
+    /// first frame found for each identifier.
     private static func collectDividerFrames(
         from element: AXUIElement,
         depth: Int,
@@ -333,21 +333,20 @@ enum MenuBarItemAXDiscovery {
         }
     }
 
-    /// Số element tối đa được đọc trong một lần quét.
+    /// Maximum number of elements read in a single scan.
     private static let maxElementsVisited = 256
 
-    /// Độ sâu tối đa khi đi xuống cây AX.
+    /// Maximum depth when descending the AX tree.
     ///
-    /// Item thật thường nằm ở cấp cháu (vd `AXGroup` → `AXMenuBarItem`
-    /// trong MenuBarAgent), nên phải đi sâu thay vì chỉ đọc children
-    /// trực tiếp của `AXExtrasMenuBar`.
+    /// Real items usually sit at grandchild level (e.g. `AXGroup` → `AXMenuBarItem`
+    /// inside MenuBarAgent), so this must descend instead of only reading direct
+    /// children of `AXExtrasMenuBar`.
     private static let maxWalkDepth = 4
 
-    /// Đọc `AXExtrasMenuBar` của một app.
+    /// Reads an app's `AXExtrasMenuBar`.
     private static func items(for app: NSRunningApplication, visited: inout Int) -> [AXMenuBarItem] {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        // ponytail: timeout ngắn cho mỗi app — một app treo không được
-        // block cả lần quét (mặc định hệ thống chờ tới 6s).
+        // ponytail: short timeout per app — one hung app must not block the whole scan (the system default waits up to 6s).
         AXUIElementSetMessagingTimeout(axApp, 1)
 
         var bar: AnyObject?
@@ -375,12 +374,12 @@ enum MenuBarItemAXDiscovery {
         return result
     }
 
-    /// Thu thập item từ một AX element.
+    /// Collects items from an AX element.
     ///
-    /// - `AXMenu`/`AXMenuItem` là nội dung dropdown, bỏ qua cả cây.
-    /// - `AXMenuBarItem` là icon thật, ghi nhận luôn, không đi sâu.
-    /// - Còn lại (group bọc ngoài…) thì đi sâu trước; chỉ ghi nhận element
-    ///   ngoài khi bên trong không có item nào.
+    /// - `AXMenu`/`AXMenuItem` is dropdown content; skip the whole tree.
+    /// - `AXMenuBarItem` is a real icon; record it immediately without descending.
+    /// - Everything else (wrapper groups…) descends first; only records the outer
+    ///   element when nothing inside is an item.
     private static func collectItems(
         from element: AXUIElement,
         pid: pid_t,
@@ -416,7 +415,7 @@ enum MenuBarItemAXDiscovery {
             for child in elements {
                 collectItems(from: child, pid: pid, appName: appName, bundleID: bundleID, depth: depth - 1, visited: &visited, into: &result)
             }
-            // Có child là item thì bỏ qua element bọc ngoài.
+            // When a child is an item, skip the wrapper element.
             guard result.count == countBefore else {
                 return
             }
@@ -425,7 +424,7 @@ enum MenuBarItemAXDiscovery {
         record(element, pid: pid, appName: appName, bundleID: bundleID, into: &result, recordNameless: false)
     }
 
-    /// Ghi nhận một element thành item khi nó có identity.
+    /// Records an element as an item when it has an identity.
     private static func record(
         _ element: AXUIElement,
         pid: pid_t,
@@ -454,7 +453,7 @@ enum MenuBarItemAXDiscovery {
         )
     }
 
-    /// Đọc frame raw (tọa độ AX) của element, nil khi không có.
+    /// Reads an element's raw frame (AX coordinates), nil when absent.
     private static func frame(of element: AXUIElement) -> CGRect? {
         var position: AnyObject?
         var size: AnyObject?
@@ -482,7 +481,7 @@ enum MenuBarItemAXDiscovery {
         return CGRect(origin: point, size: cgSize)
     }
 
-    /// Đọc một string attribute của AX element, nil khi không có/lỗi.
+    /// Reads a string attribute of an AX element, nil when missing/on error.
     private static func stringAttribute(_ attribute: CFString, of element: AXUIElement) -> String? {
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,

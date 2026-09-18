@@ -375,10 +375,10 @@ final class ControlItem {
         }
         button.target = self
         button.action = #selector(performAction)
-        // Định danh AX cho vạch chia để tra vị trí qua Accessibility
-        // (MenuBarItemAXDiscovery.dividerFrames): trên macOS 27
-        // button.window.frame trả về rect của spacer chứ không phải vị trí
-        // chevron, nên Ice Bar không thể dùng nó để phân loại section.
+        // AX identifier for the divider so its position can be looked up via
+        // Accessibility (MenuBarItemAXDiscovery.dividerFrames): on macOS 27
+        // button.window.frame returns the spacer's rect, not the chevron's
+        // position, so the Ice Bar can't use it to classify sections.
         switch identifier {
         case .hidden:
             button.setAccessibilityIdentifier("IceHiddenDivider")

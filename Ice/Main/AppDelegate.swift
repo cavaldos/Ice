@@ -41,8 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Luôn setup để vào thẳng app; nếu thiếu quyền thì mở thêm cửa sổ
-        // permissions (không chặn) — user có thể Skip và grant sau trong Settings.
+        // Always set up so the app launches straight in; if permissions are
+        // missing, open an extra non-blocking permissions window — the user
+        // can Skip and grant later in Settings.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             guard !appState.isPreview else {
                 return

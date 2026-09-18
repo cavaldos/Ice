@@ -343,11 +343,12 @@ final class MenuBarOverlayPanel: NSPanel {
 // MARK: - Content View
 
 final class MenuBarOverlayPanelContentView: NSView {
-    /// Chiều rộng pill trailing đang vẽ trên display (vùng visible items).
+    /// Width of the trailing pill currently drawn on the display (the visible-items region).
     ///
-    /// Ice Bar (spacer nở, vạch chia frame rác) dùng để loại items user đang
-    /// thấy sẵn trên menubar. Ưu tiên width đang vẽ, rồi predicted, rồi cache.
-    /// Nil khi chưa đo được — bên gọi hiện tất cả như cũ.
+    /// Used by the Ice Bar (expanded spacer, garbage divider frames) to exclude
+    /// items the user already sees on the menu bar. Prefers the width being
+    /// drawn, then the predicted one, then the cache.
+    /// Nil when nothing has been measured yet — callers show everything as before.
     static func currentTrailingVisibleWidth(for display: CGDirectDisplayID) -> CGFloat? {
         loadPersistedTrailingWidths()
         let width = displayedTrailingWidth[display]
