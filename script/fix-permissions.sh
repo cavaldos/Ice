@@ -33,13 +33,21 @@ if pgrep -f "$APP" >/dev/null 2>&1; then
 fi
 
 echo "resetting TCC entries for $BUNDLE_ID"
-# ListenEvent/PostEvent usually have no row; a miss is not an error.
+# tccutil exits 64 when TCC holds no record for the bundle id at all (a fresh
+# install that has never prompted) — expected, not a failure. Anything else
+# nonzero is a real error and must not be reported as success.
+FAILED=0
 for SERVICE in Accessibility ScreenCapture ListenEvent PostEvent; do
-  if tccutil reset "$SERVICE" "$BUNDLE_ID" >/dev/null 2>&1; then
-    echo "  $SERVICE — reset"
+  if OUTPUT=$(tccutil reset "$SERVICE" "$BUNDLE_ID" 2>&1); then
+    STATUS=0
   else
-    echo "  $SERVICE — nothing to reset"
+    STATUS=$?
   fi
+  case "$STATUS" in
+    0)  echo "  $SERVICE — reset" ;;
+    64) echo "  $SERVICE — no TCC record, nothing to reset" ;;
+    *)  echo "  $SERVICE — failed (exit $STATUS): $OUTPUT" >&2; FAILED=1 ;;
+  esac
 done
 
 echo
@@ -57,3 +65,7 @@ Now re-grant in System Settings > Privacy & Security:
 If a greyed-out Ice entry is still listed, select it, press "-", then let Ice
 prompt again.
 EOF
+
+# Report a real tccutil failure even though the rest of the run succeeded —
+# stale entries may still be in place, so the re-grant will not stick.
+exit "$FAILED"
