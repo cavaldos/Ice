@@ -31,7 +31,36 @@
 
 Download `Ice.zip` from the [latest release](https://github.com/cavaldos/Ice/releases/latest) and move the unzipped app into `/Applications`.
 
+Coming from upstream Ice installed via Homebrew? Run `brew uninstall --cask jordanbaird-ice` first, otherwise a later `brew upgrade` replaces this build with the upstream one. Your settings are kept — both builds use the same bundle ID.
+
 For local development, see [script/README.md](script/README.md).
+
+## Permissions
+
+Ice needs two grants in **System Settings > Privacy & Security**:
+
+* **Accessibility** — hiding and moving menu bar items
+* **Screen Recording** — menu bar item images and the Ice Bar
+
+> [!IMPORTANT]
+> **After every update you will need to grant these again.**
+>
+> Releases are ad-hoc signed, so the app's designated requirement is a pinned
+> `cdhash` instead of a stable Developer ID. Each build has a different hash, so
+> the requirement macOS recorded when you first granted access no longer matches
+> the new binary. The symptom is confusing: System Settings still shows the
+> toggle **on** while Ice behaves as though it were denied.
+>
+> The stale entries have to be cleared before the grant can be re-recorded:
+>
+> ```bash
+> ./script/fix-permissions.sh
+> ```
+>
+> Or by hand: quit Ice, run `tccutil reset Accessibility com.jordanbaird.Ice`
+> and `tccutil reset ScreenCapture com.jordanbaird.Ice`, relaunch, re-grant.
+
+Because the builds are ad-hoc signed rather than notarized, Gatekeeper may also refuse the first launch. Right-click the app and choose **Open**, or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/Ice.app`.
 
 ## Features
 
