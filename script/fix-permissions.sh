@@ -23,12 +23,14 @@ codesign -dvvv "$APP" 2>&1 | grep -E 'CDHash=|flags=' | sed 's/^/  /' || true
 echo
 
 # tccd caches authorization for a running process, so quit before resetting —
-# otherwise Ice stays half-denied until the next launch anyway.
-if pgrep -f "$APP" >/dev/null 2>&1; then
+# otherwise Ice stays half-denied until the next launch anyway. Match the
+# executable name rather than the bundle path: it is path-independent and never
+# treats the path as a regex (same form as script/run.sh).
+if pgrep -x Ice >/dev/null 2>&1; then
   echo "quitting Ice"
   osascript -e 'quit app "Ice"' 2>/dev/null || true
   sleep 2
-  pkill -f "$APP" 2>/dev/null || true
+  pkill -x Ice 2>/dev/null || true
   sleep 1
 fi
 
@@ -54,7 +56,7 @@ echo
 echo "relaunching Ice"
 open -a "$APP"
 sleep 3
-pgrep -f "$APP" >/dev/null 2>&1 || echo "warning: Ice did not start"
+pgrep -x Ice >/dev/null 2>&1 || echo "warning: Ice did not start"
 
 cat <<'EOF'
 
