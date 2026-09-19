@@ -246,14 +246,29 @@ private final class IceBarHostingView: NSHostingView<AnyView> {
 private struct SplitPillShape: InsettableShape {
     var leadingEndCap: MenuBarEndCap
     var trailingEndCap: MenuBarEndCap
+    var cornerRadiusFactor: Double = 1
     var insetAmount: CGFloat = 0
 
     func path(in rect: CGRect) -> Path {
         let r = rect.insetBy(dx: insetAmount, dy: insetAmount)
-        var path = Path()
         guard r.height > 0, r.width > 0 else {
-            return path
+            return Path()
         }
+        let factor = CGFloat(cornerRadiusFactor).clamped(to: 0...1)
+        // Partial rounding: per-side radii via uneven rounded rect.
+        if factor < 0.999 {
+            let radius = r.height / 2 * factor
+            let leadingRadius: CGFloat = leadingEndCap == .round ? radius : 0
+            let trailingRadius: CGFloat = trailingEndCap == .round ? radius : 0
+            return UnevenRoundedRectangle(
+                topLeadingRadius: leadingRadius,
+                bottomLeadingRadius: leadingRadius,
+                bottomTrailingRadius: trailingRadius,
+                topTrailingRadius: trailingRadius,
+                style: .circular
+            ).path(in: r)
+        }
+        var path = Path()
         path.addRect(CGRect(x: r.minX + r.height / 2, y: r.minY, width: max(0, r.width - r.height), height: r.height))
         switch leadingEndCap {
         case .square:
@@ -339,11 +354,20 @@ private struct IceBarContentView: View {
             return AnyInsettableShape(
                 SplitPillShape(
                     leadingEndCap: trailing.leadingEndCap,
-                    trailingEndCap: trailing.trailingEndCap
+                    trailingEndCap: trailing.trailingEndCap,
+                    cornerRadiusFactor: configuration.cornerRadius
                 )
             )
         } else if configuration.hasRoundedShape {
-            return AnyInsettableShape(Capsule())
+            if configuration.cornerRadius >= 0.999 {
+                return AnyInsettableShape(Capsule())
+            }
+            return AnyInsettableShape(
+                RoundedRectangle(
+                    cornerRadius: max(0, frame.height / 2 * CGFloat(configuration.cornerRadius)),
+                    style: .continuous
+                )
+            )
         } else {
             return AnyInsettableShape(RoundedRectangle(cornerRadius: frame.height / 5, style: .continuous))
         }

@@ -13,6 +13,9 @@ struct MenuBarAppearanceConfigurationV2: Hashable {
     var shapeKind: MenuBarShapeKind
     var fullShapeInfo: MenuBarFullShapeInfo
     var splitShapeInfo: MenuBarSplitShapeInfo
+    /// Corner radius factor for rounded end caps, in the range `0...1`.
+    /// `1` is a fully round pill (radius = height / 2), `0` is square.
+    var cornerRadius: Double
     var isInset: Bool
     var isDynamic: Bool
 
@@ -45,6 +48,7 @@ extension MenuBarAppearanceConfigurationV2 {
         shapeKind: .split,
         fullShapeInfo: .default,
         splitShapeInfo: .default,
+        cornerRadius: 1,
         isInset: true,
         isDynamic: true
     )
@@ -58,6 +62,7 @@ extension MenuBarAppearanceConfigurationV2: Codable {
         case shapeKind
         case fullShapeInfo
         case splitShapeInfo
+        case cornerRadius
         case isInset
         case isDynamic
     }
@@ -71,6 +76,7 @@ extension MenuBarAppearanceConfigurationV2: Codable {
             shapeKind: container.decodeIfPresent(MenuBarShapeKind.self, forKey: .shapeKind) ?? Self.defaultConfiguration.shapeKind,
             fullShapeInfo: container.decodeIfPresent(MenuBarFullShapeInfo.self, forKey: .fullShapeInfo) ?? Self.defaultConfiguration.fullShapeInfo,
             splitShapeInfo: container.decodeIfPresent(MenuBarSplitShapeInfo.self, forKey: .splitShapeInfo) ?? Self.defaultConfiguration.splitShapeInfo,
+            cornerRadius: container.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? Self.defaultConfiguration.cornerRadius,
             isInset: container.decodeIfPresent(Bool.self, forKey: .isInset) ?? Self.defaultConfiguration.isInset,
             isDynamic: container.decodeIfPresent(Bool.self, forKey: .isDynamic) ?? Self.defaultConfiguration.isDynamic
         )
@@ -84,6 +90,7 @@ extension MenuBarAppearanceConfigurationV2: Codable {
         try container.encode(shapeKind, forKey: .shapeKind)
         try container.encode(fullShapeInfo, forKey: .fullShapeInfo)
         try container.encode(splitShapeInfo, forKey: .splitShapeInfo)
+        try container.encode(cornerRadius, forKey: .cornerRadius)
         try container.encode(isInset, forKey: .isInset)
         try container.encode(isDynamic, forKey: .isDynamic)
     }

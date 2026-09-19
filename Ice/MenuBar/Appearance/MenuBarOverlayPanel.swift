@@ -740,7 +740,9 @@ final class MenuBarOverlayPanelContentView: NSView {
     /// - Parameter fullHeight: skips the 1pt top/bottom inset on non-notch
     ///   screens so the pill covers a full-bleed system background
     ///   (screen-recording pill). Horizontal insets are kept.
-    private func shapePath(in rect: CGRect, leadingEndCap: MenuBarEndCap, trailingEndCap: MenuBarEndCap, screen: NSScreen, fullHeight: Bool = false) -> NSBezierPath {
+    /// - Parameter cornerRadiusFactor: `0...1` curvature for `.round` end caps.
+    ///   `1` is a fully round pill, `0` reads as square.
+    private func shapePath(in rect: CGRect, leadingEndCap: MenuBarEndCap, trailingEndCap: MenuBarEndCap, screen: NSScreen, fullHeight: Bool = false, cornerRadiusFactor: Double = 1) -> NSBezierPath {
         let insetRect: CGRect = if !screen.hasNotch {
             switch (leadingEndCap, trailingEndCap, fullHeight) {
             case (.square, .square, true):
@@ -764,38 +766,80 @@ final class MenuBarOverlayPanelContentView: NSView {
             rect
         }
 
-        let shapeBounds = CGRect(
-            x: insetRect.minX + insetRect.height / 2,
-            y: insetRect.minY,
-            width: insetRect.width - insetRect.height,
-            height: insetRect.height
-        )
-        let leadingEndCapBounds = CGRect(
-            x: insetRect.minX,
-            y: insetRect.minY,
-            width: insetRect.height,
-            height: insetRect.height
-        )
-        let trailingEndCapBounds = CGRect(
-            x: insetRect.maxX - insetRect.height,
-            y: insetRect.minY,
-            width: insetRect.height,
-            height: insetRect.height
-        )
+        let clampedFactor = CGFloat(cornerRadiusFactor).clamped(to: 0...1)
+        let maxRadius = insetRect.height / 2
+        var leadingRadius: CGFloat = leadingEndCap == .round ? maxRadius * clampedFactor : 0
+        var trailingRadius: CGFloat = trailingEndCap == .round ? maxRadius * clampedFactor : 0
+        leadingRadius = min(leadingRadius, insetRect.width / 2)
+        trailingRadius = min(trailingRadius, insetRect.width / 2)
 
-        var path = NSBezierPath(rect: shapeBounds)
-
-        path = switch leadingEndCap {
-        case .square: path.union(NSBezierPath(rect: leadingEndCapBounds))
-        case .round: path.union(NSBezierPath(ovalIn: leadingEndCapBounds))
+        if leadingRadius <= 0, trailingRadius <= 0 {
+            return NSBezierPath(rect: insetRect)
         }
 
-        path = switch trailingEndCap {
-        case .square: path.union(NSBezierPath(rect: trailingEndCapBounds))
-        case .round: path.union(NSBezierPath(ovalIn: trailingEndCapBounds))
+        // Fully round: keep the exact stadium geometry (rect + oval caps).
+        if leadingRadius >= maxRadius, trailingRadius >= maxRadius {
+            let shapeBounds = CGRect(
+                x: insetRect.minX + insetRect.height / 2,
+                y: insetRect.minY,
+                width: insetRect.width - insetRect.height,
+                height: insetRect.height
+            )
+            let leadingEndCapBounds = CGRect(
+                x: insetRect.minX,
+                y: insetRect.minY,
+                width: insetRect.height,
+                height: insetRect.height
+            )
+            let trailingEndCapBounds = CGRect(
+                x: insetRect.maxX - insetRect.height,
+                y: insetRect.minY,
+                width: insetRect.height,
+                height: insetRect.height
+            )
+
+            var path = NSBezierPath(rect: shapeBounds)
+
+            path = switch leadingEndCap {
+            case .square: path.union(NSBezierPath(rect: leadingEndCapBounds))
+            case .round: path.union(NSBezierPath(ovalIn: leadingEndCapBounds))
+            }
+
+            path = switch trailingEndCap {
+            case .square: path.union(NSBezierPath(rect: trailingEndCapBounds))
+            case .round: path.union(NSBezierPath(ovalIn: trailingEndCapBounds))
+            }
+
+            return path
         }
 
-        return path
+        // Partial rounding: per-side corner radii on the inset rect.
+        let minX = insetRect.minX
+        let minY = insetRect.minY
+        let maxX = insetRect.maxX
+        let maxY = insetRect.maxY
+        let cgPath = CGMutablePath()
+        cgPath.move(to: CGPoint(x: minX + leadingRadius, y: minY))
+        cgPath.addLine(to: CGPoint(x: maxX - trailingRadius, y: minY))
+        if trailingRadius > 0 {
+            cgPath.addArc(center: CGPoint(x: maxX - trailingRadius, y: minY + trailingRadius), radius: trailingRadius, startAngle: -.pi / 2, endAngle: 0, clockwise: false)
+            cgPath.addLine(to: CGPoint(x: maxX, y: maxY - trailingRadius))
+            cgPath.addArc(center: CGPoint(x: maxX - trailingRadius, y: maxY - trailingRadius), radius: trailingRadius, startAngle: 0, endAngle: .pi / 2, clockwise: false)
+        } else {
+            cgPath.addLine(to: CGPoint(x: maxX, y: minY))
+            cgPath.addLine(to: CGPoint(x: maxX, y: maxY))
+        }
+        cgPath.addLine(to: CGPoint(x: minX + leadingRadius, y: maxY))
+        if leadingRadius > 0 {
+            cgPath.addArc(center: CGPoint(x: minX + leadingRadius, y: maxY - leadingRadius), radius: leadingRadius, startAngle: .pi / 2, endAngle: .pi, clockwise: false)
+            cgPath.addLine(to: CGPoint(x: minX, y: minY + leadingRadius))
+            cgPath.addArc(center: CGPoint(x: minX + leadingRadius, y: minY + leadingRadius), radius: leadingRadius, startAngle: .pi, endAngle: 3 * .pi / 2, clockwise: false)
+        } else {
+            cgPath.addLine(to: CGPoint(x: minX, y: maxY))
+            cgPath.addLine(to: CGPoint(x: minX, y: minY))
+        }
+        cgPath.closeSubpath()
+        return NSBezierPath(cgPath: cgPath)
     }
 
     /// Returns a path for the ``MenuBarShapeKind/full`` shape kind.
@@ -820,7 +864,8 @@ final class MenuBarOverlayPanelContentView: NSView {
             leadingEndCap: info.leadingEndCap,
             trailingEndCap: info.trailingEndCap,
             screen: screen,
-            fullHeight: Self.trailingFullBleed[screen.displayID] == true || Self.screenCaptureActive
+            fullHeight: Self.trailingFullBleed[screen.displayID] == true || Self.screenCaptureActive,
+            cornerRadiusFactor: fullConfiguration.cornerRadius
         )
     }
 
@@ -954,21 +999,24 @@ final class MenuBarOverlayPanelContentView: NSView {
                     leadingEndCap: info.leading.leadingEndCap,
                     trailingEndCap: info.trailing.trailingEndCap,
                     screen: screen,
-                    fullHeight: trailingFullHeight
+                    fullHeight: trailingFullHeight,
+                    cornerRadiusFactor: fullConfiguration.cornerRadius
                 )
             }
             let leadingPath = shapePath(
                 in: leadingPathBounds,
                 leadingEndCap: info.leading.leadingEndCap,
                 trailingEndCap: info.leading.trailingEndCap,
-                screen: screen
+                screen: screen,
+                cornerRadiusFactor: fullConfiguration.cornerRadius
             )
             let trailingPath = shapePath(
                 in: trailingPathBounds,
                 leadingEndCap: info.trailing.leadingEndCap,
                 trailingEndCap: info.trailing.trailingEndCap,
                 screen: screen,
-                fullHeight: trailingFullHeight
+                fullHeight: trailingFullHeight,
+                cornerRadiusFactor: fullConfiguration.cornerRadius
             )
             let path = NSBezierPath()
             path.append(leadingPath)
@@ -986,7 +1034,8 @@ final class MenuBarOverlayPanelContentView: NSView {
                 in: leadingPathBounds,
                 leadingEndCap: info.leading.leadingEndCap,
                 trailingEndCap: info.leading.trailingEndCap,
-                screen: screen
+                screen: screen,
+                cornerRadiusFactor: fullConfiguration.cornerRadius
             )
         }
         if hasTrailing {
@@ -995,7 +1044,8 @@ final class MenuBarOverlayPanelContentView: NSView {
                 leadingEndCap: info.trailing.leadingEndCap,
                 trailingEndCap: info.trailing.trailingEndCap,
                 screen: screen,
-                fullHeight: trailingFullHeight
+                fullHeight: trailingFullHeight,
+                cornerRadiusFactor: fullConfiguration.cornerRadius
             )
         }
         // Nothing known yet: leave the whole bar as wallpaper.
