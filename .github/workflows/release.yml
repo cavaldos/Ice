@@ -66,6 +66,62 @@ jobs:
         with:
           files: Ice.zip
           generate_release_notes: true
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref, '-') }} # Skip for pre-releases
+    steps:
+      - name: Derive version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+      - name: Get SHA256 from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "SHA256=$(gh api repos/cavaldos/Ice/releases/tags/$GITHUB_REF_NAME \
+            --jq '.assets[] | select(.name == "Ice.zip") | .digest' \
+            | sed 's/sha256://')" >> $GITHUB_ENV
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: cavaldos/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Update cask
+        run: |
+          cat > homebrew-tap/Casks/ice.rb << 'EOF'
+          cask "ice" do
+            version "${{ env.VERSION }}"
+            sha256 "${{ env.SHA256 }}"
+
+            url "https://github.com/cavaldos/Ice/releases/download/v#{version}/Ice.zip"
+            name "Ice"
+            desc "Free and open-source menu bar manager for macOS"
+            homepage "https://icemenubar.app"
+
+            depends_on macos: :sonoma
+            conflicts_with cask: "jordanbaird-ice"
+
+            app "Ice.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.jordanbaird.Ice.plist",
+            ]
+
+            caveats <<~EOS
+              Ice is ad-hoc signed. On first launch, right-click the app and choose Open.
+              After every update, re-grant Accessibility and Screen Recording in
+              System Settings > Privacy & Security (see https://github.com/cavaldos/Ice#permissions).
+            EOS
+          end
+          EOF
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/ice.rb
+          git diff --cached --quiet || git commit -m "ice ${{ env.VERSION }}"
+          git push
 # After the Release finishes, publish the appcast so installed apps see it:
 #   ./script/update-appcast.sh <tag> --key <private-key.pem>
 # (pushes appcast.xml to the ice-releases repo; SUFeedURL https://cavaldos.github.io/ice-releases/appcast.xml)
