@@ -113,6 +113,32 @@ enum MenuBarItemAXDiscovery {
         }
     }
 
+    /// SF Symbol for a CGS menu bar item (no AX identifier available).
+    ///
+    /// Same intent as `systemImageName(forIdentifier:)`: ControlCenter /
+    /// SystemUIServer extras share one host app, so `owningApplication.icon`
+    /// is the same generic icon for Sound, Wi-Fi, Clock… — mapping the
+    /// title keeps Visible stable across CGS/AX sources instead of
+    /// flickering between a generic icon and an SF Symbol per refresh.
+    /// Only applies to `com.apple.*` hosts so third-party apps keep
+    /// their real icons.
+    static func systemImageName(forTitle title: String?, bundleID: String?) -> String? {
+        guard bundleID?.hasPrefix("com.apple.") == true else {
+            return nil
+        }
+        switch title?.lowercased() ?? "" {
+        case "wifi", "wi-fi": return "wifi"
+        case "sound": return "speaker.wave.2.fill"
+        case "bluetooth": return "bluetooth"
+        case "battery", "batterymenu": return "battery.100"
+        case "bentobox", "controlcenter", "control center": return "switch.2"
+        case "clock": return "clock"
+        case "spotlight": return "magnifyingglass"
+        case "airplay", "screenmirroring", "screen mirroring": return "airplayvideo"
+        default: return nil
+        }
+    }
+
     /// Lists all menu bar items of running apps.
     ///
     /// - Parameter apps: The apps to scan. Pass `NSWorkspace.shared.runningApplications`

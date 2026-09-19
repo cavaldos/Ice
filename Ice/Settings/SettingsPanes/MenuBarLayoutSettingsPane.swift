@@ -29,8 +29,17 @@ struct MenuBarLayoutSettingsPane: View {
     /// before it. Also lets the section know this drop already has an item
     /// handling it (so item and section don't both handle the same drop).
     @State private var dropTargetID: String?
-    /// Background scan reconciling real positions, without the shared spinner.
-    @State private var isReconciling = false
+    /// Generation counter for the divider poll: a new scan bumps it to cancel
+    /// the previous poll, so only the latest scan keeps polling.
+    @State private var dividerPollGeneration = 0
+    /// App icons by PID: `NSRunningApplication.icon` is nil transiently on
+    /// first lookup (app info not loaded yet) → gray box until the next
+    /// Refresh. Caching successes keeps icons stable across re-classifies,
+    /// and the retry below fills misses without manual taps.
+    @State private var iconCache = [pid_t: NSImage]()
+    /// Generation for the missing-icon retry: a new scan bumps it to cancel
+    /// the previous retry, so only the latest scan keeps retrying.
+    @State private var iconRetryGeneration = 0
 
     private var totalCount: Int {
         sections.values.reduce(0) { $0 + $1.count }
@@ -123,6 +132,11 @@ struct MenuBarLayoutSettingsPane: View {
                 return
             }
             applySnapshotFromCache()
+        }
+        .onDisappear {
+            // Stop the divider poll + icon retry when leaving the tab.
+            dividerPollGeneration += 1
+            iconRetryGeneration += 1
         }
     }
 
@@ -288,55 +302,72 @@ struct MenuBarLayoutSettingsPane: View {
         .help("New menu bar items appear here")
     }
 
-    /// Drop an item into a new group with eventual consistency: the UI jumps
-    /// immediately (with a "moving" badge on that exact icon) while the
-    /// Command-drag and the reconcile scan run in the background; the real
-    /// position catches up onto the UI afterwards.
+    /// Drop an item into a new group: each attempt re-reads live positions
+    /// first (cached frames go stale — a drag changes no window IDs, so a
+    /// plain re-scan would reuse pre-drag frames), drags, then verifies the
+    /// icon really landed before counting it. Up to 3 physical drags; between
+    /// attempts the UI rebuilds from truth, so a miss never leaves a fake
+    /// optimistic position behind.
     /// The `isMoving` guard blocks a second drag from fighting over the mouse.
     private func drop(itemID: String, to kind: MenuBarItemAXDiscovery.SectionKind) async {
         guard !isMoving else {
             return
         }
-        guard let (item, fromKind) = removeItem(id: itemID) else {
-            return
-        }
-        guard fromKind != kind else {
-            // Dropped back into its original group; put it back where it was.
-            sections[kind, default: []].append(item)
-            return
-        }
-        guard
-            let destination = destinationPoint(for: kind),
-            let sourceFrame = item.quartzFrame
-        else {
-            // No drop target known — re-scan for the real positions.
-            await refresh()
-            return
-        }
         isMoving = true
-        pendingMoves.insert(item.id)
+        pendingMoves.insert(itemID)
         defer {
-            pendingMoves.remove(item.id)
+            pendingMoves.remove(itemID)
             isMoving = false
         }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            sections[kind, default: []].append(item)
-        }
-        await MenuBarItemAXMover.commandDrag(
-            from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
-            to: destination
-        )
-        // Reconcile in the background: done once the icon lands in the right
-        // group, otherwise wait a bit and re-scan (up to 3 tries). Silent scans, no UI stutter.
-        for attempt in 0..<3 {
-            await reconcile()
-            if sections[kind]?.contains(where: { $0.id == item.id }) == true {
+        for _ in 0..<3 {
+            // Force bypasses the windowIDs equality skip so frames are re-read.
+            await appState.itemManager.cacheItemsIfNeeded(force: true)
+            applySnapshotFromCache()
+            guard let (item, fromKind) = removeItem(id: itemID) else {
+                await refresh()
                 return
             }
-            if attempt < 2 {
-                try? await Task.sleep(for: .milliseconds(400))
+            guard fromKind != kind else {
+                // Already in the destination group; put it back where it was,
+                // then re-scan so the UI is truth, not the optimistic append.
+                sections[kind, default: []].append(item)
+                pendingMoves.remove(itemID)
+                isMoving = false
+                await refreshAfterDrop()
+                return
             }
+            guard
+                let destination = destinationPoint(for: kind),
+                let sourceFrame = item.quartzFrame
+            else {
+                // No drop target known — re-scan for the real positions.
+                await refresh()
+                return
+            }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                sections[kind, default: []].append(item)
+            }
+            await MenuBarItemAXMover.commandDrag(
+                from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
+                to: destination
+            )
+            await appState.itemManager.cacheItemsIfNeeded(force: true)
+            applySnapshotFromCache()
+            if sections[kind]?.contains(where: { $0.id == itemID }) == true {
+                // Landed — but the frame right after a drag can still be
+                // settling, so always do one settled re-scan instead of
+                // trusting this snapshot. Otherwise the UI sometimes stays
+                // wrong until the user hits Refresh by hand.
+                pendingMoves.remove(itemID)
+                isMoving = false
+                await refreshAfterDrop()
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(400))
         }
+        pendingMoves.remove(itemID)
+        isMoving = false
+        await refreshAfterDrop()
     }
 
     /// Remove the item from its current group, returning the item and its old group.
@@ -363,7 +394,9 @@ struct MenuBarLayoutSettingsPane: View {
 
     /// Drop one icon onto another: insert before the target icon (same zone
     /// means reordering, different zone means moving zones at the right position).
-    /// The UI jumps immediately, the Command-drag runs in the background, and the reconcile scan matches the real positions.
+    /// Like section drops, each attempt re-reads live positions first, drags,
+    /// then verifies the landing — a missed drag is retried with fresh frames
+    /// instead of snapping back and forcing the user to redo it by hand.
     private func drop(itemID: String, onto targetID: String) async {
         guard !isMoving else {
             return
@@ -371,70 +404,103 @@ struct MenuBarLayoutSettingsPane: View {
         guard itemID != targetID else {
             return
         }
-        guard let (item, fromKind, fromIndex) = findItem(id: itemID) else {
-            return
-        }
-        guard let target = findItem(id: targetID) else {
-            await refresh()
-            return
-        }
-        let toKind = target.kind
-        guard let sourceFrame = item.quartzFrame else {
-            await refresh()
-            return
-        }
-        // Remove the source first, then compute the insert position after
-        // compaction (dragging forward shifts the target index down by 1 because the array is now shorter).
-        var withoutSource = sections[fromKind] ?? []
-        withoutSource.remove(at: fromIndex)
-        sections[fromKind] = withoutSource
-        let toItems = sections[toKind] ?? []
-        let insertIndex: Int
-        if fromKind == toKind, fromIndex < target.index {
-            insertIndex = target.index - 1
-        } else {
-            insertIndex = toItems.firstIndex(where: { $0.id == targetID }) ?? toItems.count
-        }
-        let leftFrame = insertIndex > 0 ? toItems[max(0, insertIndex - 1)].quartzFrame : nil
-        let rightFrame = insertIndex < toItems.count ? toItems[insertIndex].quartzFrame : nil
-
         isMoving = true
-        pendingMoves.insert(item.id)
+        pendingMoves.insert(itemID)
         defer {
-            pendingMoves.remove(item.id)
+            pendingMoves.remove(itemID)
             isMoving = false
             dropTargetID = nil
         }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            sections[toKind, default: []].insert(item, at: min(insertIndex, toItems.count))
-        }
-        guard let destination = reorderDestination(for: toKind, leftFrame: leftFrame, rightFrame: rightFrame) else {
-            await refresh()
-            return
-        }
-        await MenuBarItemAXMover.commandDrag(
-            from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
-            to: destination
-        )
-        if fromKind == toKind {
-            // Same zone: classification is unchanged, so just re-scan to let the
-            // real order overwrite the optimistic order (twice, spaced out, to let the system commit).
-            await reconcile()
-            try? await Task.sleep(for: .milliseconds(400))
-            await reconcile()
-            return
-        }
-        // Different zone: done once the icon lands in the right group,
-        // otherwise wait a bit and re-scan (up to 3 tries). Silent scans, no UI stutter.
-        for attempt in 0..<3 {
-            await reconcile()
-            if sections[toKind]?.contains(where: { $0.id == item.id }) == true {
+        for _ in 0..<3 {
+            await appState.itemManager.cacheItemsIfNeeded(force: true)
+            applySnapshotFromCache()
+            guard
+                let (item, fromKind, fromIndex) = findItem(id: itemID),
+                let target = findItem(id: targetID),
+                let sourceFrame = item.quartzFrame
+            else {
+                await refresh()
                 return
             }
-            if attempt < 2 {
-                try? await Task.sleep(for: .milliseconds(400))
+            let toKind = target.kind
+            if fromKind == toKind, isImmediatelyBefore(itemID: itemID, targetID: targetID, in: toKind) {
+                // Already in position — no drag needed.
+                return
             }
+            // Remove the source first, then compute the insert position after
+            // compaction (dragging forward shifts the target index down by 1 because the array is now shorter).
+            var withoutSource = sections[fromKind] ?? []
+            withoutSource.remove(at: fromIndex)
+            sections[fromKind] = withoutSource
+            let toItems = sections[toKind] ?? []
+            let insertIndex: Int
+            if fromKind == toKind, fromIndex < target.index {
+                insertIndex = target.index - 1
+            } else {
+                insertIndex = toItems.firstIndex(where: { $0.id == targetID }) ?? toItems.count
+            }
+            let leftFrame = insertIndex > 0 ? toItems[max(0, insertIndex - 1)].quartzFrame : nil
+            let rightFrame = insertIndex < toItems.count ? toItems[insertIndex].quartzFrame : nil
+            guard let destination = reorderDestination(for: toKind, leftFrame: leftFrame, rightFrame: rightFrame) else {
+                await refresh()
+                return
+            }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                sections[toKind, default: []].insert(item, at: min(insertIndex, toItems.count))
+            }
+            await MenuBarItemAXMover.commandDrag(
+                from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
+                to: destination
+            )
+            await appState.itemManager.cacheItemsIfNeeded(force: true)
+            applySnapshotFromCache()
+            if hasLanded(itemID: itemID, targetID: targetID, fromKind: fromKind, toKind: toKind) {
+                // Same as section drops: one settled re-scan after landing,
+                // don't trust the immediate post-drag snapshot.
+                pendingMoves.remove(itemID)
+                isMoving = false
+                dropTargetID = nil
+                await refreshAfterDrop()
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(400))
         }
+        pendingMoves.remove(itemID)
+        isMoving = false
+        dropTargetID = nil
+        await refreshAfterDrop()
+    }
+
+    /// True when the item already sits immediately before the target in its group.
+    private func isImmediatelyBefore(itemID: String, targetID: String, in kind: MenuBarItemAXDiscovery.SectionKind) -> Bool {
+        guard
+            let items = sections[kind],
+            let itemIndex = items.firstIndex(where: { $0.id == itemID }),
+            let targetIndex = items.firstIndex(where: { $0.id == targetID })
+        else {
+            return false
+        }
+        return itemIndex + 1 == targetIndex
+    }
+
+    /// True when a drag verifiably landed: cross-zone means membership in the
+    /// destination group, same-zone means sitting right before the target icon.
+    private func hasLanded(
+        itemID: String,
+        targetID: String,
+        fromKind: MenuBarItemAXDiscovery.SectionKind,
+        toKind: MenuBarItemAXDiscovery.SectionKind
+    ) -> Bool {
+        guard let items = sections[toKind] else {
+            return false
+        }
+        guard items.contains(where: { $0.id == itemID }) else {
+            return false
+        }
+        if fromKind == toKind {
+            return isImmediatelyBefore(itemID: itemID, targetID: targetID, in: toKind)
+        }
+        return true
     }
 
     /// Command-drag drop point for inserting into the gap between two adjacent
@@ -586,17 +652,21 @@ struct MenuBarLayoutSettingsPane: View {
         await scanAndApply()
     }
 
-    /// Background reconcile after a drag: the same scan but silent — no
-    /// spinner, no button lock — the UI stays smooth and the real positions catch up afterwards.
-    private func reconcile() async {
-        guard !isReconciling else {
-            return
+    /// Settled re-scan after a drag: unlike the Refresh button it must never
+    /// be skipped by the `isRefreshing` guard (e.g. the tab-open scan still
+    /// running), otherwise the UI stays on the pre-drag snapshot until the
+    /// user hits Refresh by hand.
+    private func refreshAfterDrop() async {
+        for _ in 0..<30 where isRefreshing {
+            try? await Task.sleep(for: .milliseconds(100))
         }
-        isReconciling = true
-        defer {
-            isReconciling = false
+        if isRefreshing {
+            // A scan is stuck (divider wait); run one anyway so the post-drag
+            // truth is painted instead of leaving the optimistic UI behind.
+            await scanAndApply()
+        } else {
+            await refresh()
         }
-        await scanAndApply()
     }
 
     /// Fast synchronous divider read: prefers AX (own process, no system-wide
@@ -669,32 +739,52 @@ struct MenuBarLayoutSettingsPane: View {
         if !cached.isEmpty {
             for item in cached {
                 quartzYs.append(item.frame.midY)
-                let bundleID = item.owningApplication?.bundleIdentifier
+                // Single lookup: owningApplication builds a new
+                // NSRunningApplication each access, and .icon is nil
+                // transiently on first touch — reuse + cache it.
+                let app = item.owningApplication
+                let bundleID = app?.bundleIdentifier
+                let systemImage = MenuBarItemAXDiscovery.systemImageName(
+                    forTitle: item.title ?? item.displayName, bundleID: bundleID
+                )
+                var appIcon: NSImage?
+                if systemImage == nil {
+                    if let cachedIcon = iconCache[item.ownerPID] {
+                        appIcon = cachedIcon
+                    } else if let icon = app?.icon {
+                        iconCache[item.ownerPID] = icon
+                        appIcon = icon
+                    }
+                }
                 grouped[kind(centerX: item.frame.midX), default: []].append(
                     RowItem(
                         id: stableID(for: "cgs:\(item.info):\(item.ownerPID)"),
                         title: item.displayName,
                         subtitle: item.subtitle,
-                        systemImage: nil,
-                        appIcon: item.owningApplication?.icon,
+                        systemImage: systemImage,
+                        appIcon: appIcon,
                         isSystem: bundleID?.hasPrefix("com.apple.") == true,
                         quartzFrame: item.frame
                     )
                 )
             }
         } else {
-            var icons = [pid_t: NSImage]()
             for item in axFallback.sorted(by: { ($0.axFrame?.midX ?? .greatestFiniteMagnitude) < ($1.axFrame?.midX ?? .greatestFiniteMagnitude) }) {
                 let systemImage = MenuBarItemAXDiscovery.systemImageName(forIdentifier: item.identifier)
                 var appIcon: NSImage?
-                if systemImage == nil, icons[item.pid] == nil {
-                    if item.bundleID == "com.apple.TextInputMenuAgent" {
-                        icons[item.pid] = MenuBarItemAXDiscovery.inputSourceIcon()
-                    } else {
-                        icons[item.pid] = NSRunningApplication(processIdentifier: item.pid)?.icon
+                if systemImage == nil {
+                    if let cachedIcon = iconCache[item.pid] {
+                        appIcon = cachedIcon
+                    } else if item.bundleID == "com.apple.TextInputMenuAgent" {
+                        if let icon = MenuBarItemAXDiscovery.inputSourceIcon() {
+                            iconCache[item.pid] = icon
+                            appIcon = icon
+                        }
+                    } else if let icon = NSRunningApplication(processIdentifier: item.pid)?.icon {
+                        iconCache[item.pid] = icon
+                        appIcon = icon
                     }
                 }
-                appIcon = icons[item.pid]
                 if let frame = item.axFrame {
                     quartzYs.append(frame.midY)
                 }
@@ -715,8 +805,60 @@ struct MenuBarLayoutSettingsPane: View {
         return (grouped, midY)
     }
 
+    /// Whether Ice's Hidden divider is expected in the menu bar right now.
+    private func isHiddenDividerExpected() -> Bool {
+        appState.menuBarManager.section(withName: .hidden)?.controlItem.isAddedToMenuBar == true
+    }
+
+    /// Whether Ice's Always Hidden divider is expected in the menu bar right now.
+    private func isAlwaysHiddenDividerExpected() -> Bool {
+        guard appState.settingsManager.advancedSettingsManager.enableAlwaysHiddenSection else {
+            return false
+        }
+        return appState.menuBarManager.section(withName: .alwaysHidden)?.controlItem.isAddedToMenuBar == true
+    }
+
+    /// True when an expected divider's position is still unknown — icons would
+    /// be misclassified until it appears. Checks each divider independently so
+    /// a late second divider doesn't get stuck when the first one is already known.
+    private func isMissingExpectedDivider(hiddenX: CGFloat?, alwaysHiddenX: CGFloat?) -> Bool {
+        (hiddenX == nil && isHiddenDividerExpected())
+            || (alwaysHiddenX == nil && isAlwaysHiddenDividerExpected())
+    }
+
+    /// Keep re-classifying from the current cache until expected dividers show
+    /// up (up to ~7s). Lightweight: only re-reads divider positions, no CGS
+    /// walk — the 5s background timer keeps pumping itemCache separately.
+    private func startDividerPoll() {
+        dividerPollGeneration += 1
+        let generation = dividerPollGeneration
+        Task { @MainActor in
+            for _ in 0..<14 {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard generation == dividerPollGeneration else {
+                    return
+                }
+                if isMoving {
+                    continue
+                }
+                let (hx, ahx) = resolveDividers()
+                if hx != hiddenDividerX || ahx != alwaysHiddenDividerX {
+                    hiddenDividerX = hx
+                    alwaysHiddenDividerX = ahx
+                    applySnapshotFromCache()
+                }
+                if !isMissingExpectedDivider(hiddenX: hx, alwaysHiddenX: ahx) {
+                    return
+                }
+            }
+        }
+    }
+
     /// One real scan: read permissions, CGS cache, classify by dividers.
     private func scanAndApply() async {
+        // Cancel any previous divider poll + icon retry; this scan starts its own if needed.
+        dividerPollGeneration += 1
+        iconRetryGeneration += 1
         // With permission already granted, use the cache instead of making
         // WindowServer walk the window list again on every Refresh.
         if !hasScreenRecordingPermission {
@@ -729,16 +871,15 @@ struct MenuBarLayoutSettingsPane: View {
             await appState.itemManager.cacheItemsIfNeeded()
         }
 
-        let manager = appState.menuBarManager
         // Dividers have no window right after boot → minX is nil → every icon
         // would be misclassified as Visible. Prefer fast AX, waiting at most ~2s
-        // only when both dividers are missing, instead of making the user hit Refresh repeatedly.
+        // when an expected divider is still missing, instead of making the user hit Refresh repeatedly.
         var (hiddenX, alwaysHiddenX) = resolveDividers()
-        if hiddenX == nil, alwaysHiddenX == nil {
+        if isMissingExpectedDivider(hiddenX: hiddenX, alwaysHiddenX: alwaysHiddenX) {
             for _ in 0..<20 {
                 try? await Task.sleep(for: .milliseconds(100))
                 (hiddenX, alwaysHiddenX) = resolveDividers()
-                if hiddenX != nil || alwaysHiddenX != nil {
+                if !isMissingExpectedDivider(hiddenX: hiddenX, alwaysHiddenX: alwaysHiddenX) {
                     break
                 }
             }
@@ -763,18 +904,48 @@ struct MenuBarLayoutSettingsPane: View {
             anchorY = 8
         }
 
-        // When the divider already shows in Settings (isAddedToMenuBar) but its
-        // window hasn't appeared yet, schedule one re-scan so the user doesn't have to tap manually.
-        if
-            hiddenX == nil, alwaysHiddenX == nil,
-            !grouped.isEmpty,
-            manager.section(withName: .hidden)?.controlItem.isAddedToMenuBar == true
-                || manager.section(withName: .alwaysHidden)?.controlItem.isAddedToMenuBar == true
-        {
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1))
-                if hiddenDividerX == nil, alwaysHiddenDividerX == nil {
-                    await reconcile()
+        // When an expected divider's window hasn't appeared yet, keep polling
+        // so the icons land in the right groups without manual Refresh taps.
+        if isMissingExpectedDivider(hiddenX: hiddenX, alwaysHiddenX: alwaysHiddenX), !grouped.isEmpty {
+            startDividerPoll()
+        }
+
+        // Icons that are still blank (app icon nil on first lookup) fill in
+        // on their own — no repeated Refresh taps needed. Pass the AX
+        // fallback through: when the CGS cache is empty the retry must
+        // rebuild from the same AX items (applySnapshotFromCache alone
+        // would rebuild from an empty cache with no fallback and change nothing).
+        scheduleIconRetryIfNeeded(axFallback: axFallback)
+    }
+
+    /// Re-resolve blank icons a couple times: `NSRunningApplication.icon`
+    /// is often nil on first touch right after opening the tab. Retries only
+    /// re-read icons/dividers from the current cache (no CGS walk), so they
+    /// are cheap; a new scan cancels the previous retry.
+    private func scheduleIconRetryIfNeeded(axFallback: [MenuBarItemAXDiscovery.AXMenuBarItem] = []) {
+        guard sections.values.flatMap({ $0 }).contains(where: { $0.systemImage == nil && $0.appIcon == nil }) else {
+            return
+        }
+        iconRetryGeneration += 1
+        let generation = iconRetryGeneration
+        Task { @MainActor in
+            for delay in [500, 1500] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard generation == iconRetryGeneration, !isMoving else {
+                    return
+                }
+                let (hx, ahx) = resolveDividers()
+                hiddenDividerX = hx
+                alwaysHiddenDividerX = ahx
+                let (grouped, midY) = buildSections(hiddenX: hx, alwaysHiddenX: ahx, axFallback: axFallback)
+                if !grouped.isEmpty {
+                    sections = grouped
+                }
+                if let midY {
+                    anchorY = midY
+                }
+                if !sections.values.flatMap({ $0 }).contains(where: { $0.systemImage == nil && $0.appIcon == nil }) {
+                    return
                 }
             }
         }

@@ -333,7 +333,12 @@ extension MenuBarItemManager {
 
     /// Caches the current menu bar items if needed, ensuring that the control
     /// items are in the correct order.
-    func cacheItemsIfNeeded() async {
+    ///
+    /// - Parameter force: When true, re-reads item frames even if the window
+    ///   ID list is unchanged. Needed after a drag: moving an icon changes no
+    ///   window IDs, so without this the post-drag reconcile would classify
+    ///   pre-drag frames and the icon would look like it "snapped back".
+    func cacheItemsIfNeeded(force: Bool = false) async {
         do {
             try await waitForItemsToStopMoving(timeout: .seconds(1))
         } catch is TaskTimeoutError {
@@ -347,7 +352,7 @@ extension MenuBarItemManager {
         }
 
         let itemWindowIDs = Bridging.getWindowList(option: [.menuBarItems, .activeSpace])
-        if cachedItemWindowIDs == itemWindowIDs {
+        if !force, cachedItemWindowIDs == itemWindowIDs {
             logSkippingCache(reason: "item windows have not changed")
             return
         } else {

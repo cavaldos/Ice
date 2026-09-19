@@ -150,9 +150,6 @@ private struct SettingsSidebarItem: View {
                     .foregroundStyle(isSelected ? .blue : .primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                if identifier == .menuBarLayout {
-                    BetaBadge()
-                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
