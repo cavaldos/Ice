@@ -68,7 +68,20 @@ enum MenuBarItemAXDiscovery {
         guard let centerX else {
             return .visible
         }
-        if let alwaysHiddenDividerX, centerX < alwaysHiddenDividerX {
+        // Swapped dividers (always-hidden right of hidden) are an invalid
+        // layout macOS 27 can leave behind (issue #17): the always-hidden
+        // boundary would swallow every icon. Ignore it so icons land in
+        // Hidden/Visible instead of all piling into Always-Hidden.
+        let alwaysHiddenX: CGFloat? = if
+            let alwaysHiddenDividerX,
+            let hiddenDividerX,
+            alwaysHiddenDividerX > hiddenDividerX
+        {
+            nil
+        } else {
+            alwaysHiddenDividerX
+        }
+        if let alwaysHiddenX, centerX < alwaysHiddenX {
             return .alwaysHidden
         }
         if let hiddenDividerX, centerX < hiddenDividerX {

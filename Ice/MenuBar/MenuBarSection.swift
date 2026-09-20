@@ -129,7 +129,12 @@ final class MenuBarSection {
         self.appState = appState
         // Restore the visibility the user last chose; a fresh install
         // defaults to hidden, matching the previous launch behavior.
-        controlItem.state = Defaults.bool(forKey: shownDefaultsKey) ? .showItems : .hideItems
+        // Exception: on macOS 27 the pre-reveal population (no 0.11.27
+        // migration flag yet) starts shown, so icons trapped out of sight
+        // by the old hidden default come back (issue #17). Decided here at
+        // init instead of in the async migration so no launch race can
+        // strand the sections hidden; the migration persists the outcome.
+        controlItem.state = Self.initialState(for: shownDefaultsKey)
         controlItem.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -169,6 +174,19 @@ final class MenuBarSection {
         case .hidden: .showHiddenSection
         case .alwaysHidden: .showAlwaysHiddenSection
         }
+    }
+
+    /// The hiding state a section starts in for the given persisted key.
+    ///
+    /// Before the 0.11.27 migration has run on macOS 27, starts shown: the
+    /// old hidden default (or a stored hidden choice from when dividers
+    /// could be placed) can otherwise trap icons out of sight with no
+    /// working drag to pull them back. Afterwards the stored choice wins.
+    private static func initialState(for key: Defaults.Key) -> ControlItem.HidingState {
+        if #available(macOS 27, *), !Defaults.bool(forKey: .hasMigrated0_11_27) {
+            return .showItems
+        }
+        return Defaults.bool(forKey: key) ? .showItems : .hideItems
     }
 
     /// Shows the section.

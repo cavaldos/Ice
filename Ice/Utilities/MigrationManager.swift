@@ -31,6 +31,7 @@ extension MigrationManager {
         let results = [
             manager.migrate0_10_1(),
             manager.migrate0_11_10(),
+            manager.migrate0_11_27(),
         ]
 
         for result in results {
@@ -302,6 +303,59 @@ extension MigrationManager {
             return .failureAndLogError(.appearanceConfigurationMigrationError(.otherError(error)))
         }
         return .success
+    }
+}
+
+// MARK: - Migrate 0.11.27
+
+extension MigrationManager {
+    /// Reveals all menu bar sections on macOS 27 (issue #17).
+    ///
+    /// On macOS 27 the system no longer honors Ice's divider positions and
+    /// per-item windows are gone, so sections left hidden by an earlier
+    /// install (or by the hidden-by-default fresh state) trap icons out of
+    /// sight with no working drag to pull them back. Showing everything once
+    /// hands the icons back; anyone who wants them hidden re-hides in one click.
+    ///
+    /// The reveal is seeded synchronously from `AppState.performSetup`
+    /// (before the sections initialize); this migration persists the outcome
+    /// so the stored choice wins on later launches.
+    private func migrate0_11_27() -> MigrationResult {
+        guard !Defaults.bool(forKey: .hasMigrated0_11_27) else {
+            return .success
+        }
+        defer {
+            Defaults.set(true, forKey: .hasMigrated0_11_27)
+            Logger.migration.info("Successfully migrated to 0.11.27 settings")
+        }
+        guard #available(macOS 27, *) else {
+            return .success
+        }
+        Defaults.set(true, forKey: .showVisibleSection)
+        Defaults.set(true, forKey: .showHiddenSection)
+        Defaults.set(true, forKey: .showAlwaysHiddenSection)
+        return .success
+    }
+
+    /// Seeds the 0.11.27 section reveal synchronously (issue #17).
+    ///
+    /// Called from `AppState.performSetup` before the menu bar sections are
+    /// created, so the reveal cannot lose a race with the async migration:
+    /// whatever runs first, the sections initialize shown exactly once, and
+    /// the stored choice wins on every later launch.
+    static func seedRevealSections27() {
+        guard !Defaults.bool(forKey: .hasMigrated0_11_27) else {
+            return
+        }
+        guard #available(macOS 27, *) else {
+            Defaults.set(true, forKey: .hasMigrated0_11_27)
+            return
+        }
+        Defaults.set(true, forKey: .showVisibleSection)
+        Defaults.set(true, forKey: .showHiddenSection)
+        Defaults.set(true, forKey: .showAlwaysHiddenSection)
+        Defaults.set(true, forKey: .hasMigrated0_11_27)
+        Logger.migration.info("Seeded 0.11.27 section reveal")
     }
 }
 

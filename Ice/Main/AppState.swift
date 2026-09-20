@@ -194,6 +194,10 @@ final class AppState: ObservableObject {
             return
         }
         isSetup = true
+        // Reveal-first on macOS 27 (issue #17): seed here, synchronously
+        // before the sections initialize, so no async migration race can
+        // strand them hidden.
+        MigrationManager.seedRevealSections27()
         // Settings first: ControlItems subscribe to settings defaults, so loading
         // settings before creating menu bar sections avoids a double
         // updateStatusItem/add-remove cycle at boot.
