@@ -1,7 +1,7 @@
 <div align="center">
     <img src="Ice/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width=200 height=200>
     <h1>Ice — Free & Open-Source Menu Bar Manager for macOS</h1>
-    <p>Hide and organize menu bar icons on your Mac. The best <strong>free Bartender alternative</strong> — also a great <strong>Hidden Bar</strong> and <strong>Vanilla alternative</strong> — focused on stability and a smooth, distraction-free experience.</p>
+    <p>Hide and organize menu bar icons on your Mac. The best <strong>free Bartender alternative</strong> — also a great <strong>Hidden Bar</strong> and <strong>Vanilla alternative</strong> — focused on stability and a smooth, distraction-free experience.<br>✅ <strong>Fully supports macOS 27</strong></p>
 </div>
 
 ![Ice menu bar manager for macOS — hide and organize menu bar icons](./Resources/Image/banner.png)
@@ -12,6 +12,7 @@
 [![Downloads](https://img.shields.io/github/downloads/cavaldos/Ice/total?style=flat-square)](https://github.com/cavaldos/Ice/releases)
 ![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
 ![Requirements](https://img.shields.io/badge/requirements-macOS%2014%2B-fa4e49?style=flat-square)
+![macOS 27](https://img.shields.io/badge/macOS_27-fully_supported-brightgreen?style=flat-square)
 [![GitHub stars](https://img.shields.io/github/stars/cavaldos/Ice?style=flat-square)](https://github.com/cavaldos/Ice/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/cavaldos/Ice?style=flat-square)](https://github.com/cavaldos/Ice/network/members)
 [![Website](https://img.shields.io/badge/Website-015FBA?style=flat-square)](https://icemenubar.app)
@@ -28,6 +29,9 @@
 
 > [!NOTE]
 > Ice is in active development. Grab the latest build from the [releases page](https://github.com/cavaldos/Ice/releases/latest).
+
+> [!TIP]
+> ✅ **Fully supports macOS 27** — tested and ready for the latest macOS, all the way back to macOS 14 Sonoma.
 
 ## Install
 
@@ -71,7 +75,7 @@ Ice lets you **hide menu bar icons on Mac, organize them into sections, and reve
 | Second menu bar (Ice Bar) for notched Macs | ✅ | ✅ (Bartender Bar) | ❌ | ❌ |
 | Menu bar themes (tint, border, shape) | ✅ | ✅ | ❌ | ❌ |
 | Hotkeys | ✅ | ✅ | Limited | Pro only |
-| macOS 14 Sonoma → macOS 27 ready | ✅ | ✅ | ⚠️ unmaintained | ✅ |
+| macOS 27 support | ✅ **fully supported, tested** | ✅ | ⚠️ unmaintained | ✅ |
 
 ## Gallery
 
@@ -140,7 +144,7 @@ Toggle hidden sections, the Ice Bar, divider icons, and application menus from t
 **Lightweight and private**
 Launch at login, automatic updates. No account, no telemetry, no subscription — your settings stay on your Mac.
 
-> Requires macOS 14 Sonoma or later — ready for macOS 26 Tahoe and macOS 27. If you need a similar tool for macOS 13 Ventura or earlier, check out [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
+> ✅ **macOS 27 fully supported** — works on macOS 14 Sonoma and later, including Sequoia, Tahoe, and macOS 27. If you need a similar tool for macOS 13 Ventura or earlier, check out [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
 
 ## Project Philosophy
 
@@ -180,7 +184,7 @@ Yes — hide/show icons, always-hidden section, Ice Bar for the notch, hotkeys a
 Drag icons between Visible / Hidden / Always-Hidden in Menu Bar Layout, or right-click any icon. Hover or hotkey to reveal.
 
 **Which macOS versions are supported?**
-macOS 14 Sonoma and later, including Sequoia, Tahoe and macOS 27. For macOS 13 or earlier, use [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
+macOS 14 Sonoma and later — with **full, tested support for macOS 27**, plus Sequoia and Tahoe. For macOS 13 or earlier, use [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
 
 ## License
 
