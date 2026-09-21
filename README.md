@@ -9,6 +9,7 @@
 <div align="center">
 
 [![Download](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/cavaldos/Ice/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/cavaldos/Ice/total?style=flat-square)](https://github.com/cavaldos/Ice/releases)
 ![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
 ![Requirements](https://img.shields.io/badge/requirements-macOS%2014%2B-fa4e49?style=flat-square)
 [![GitHub stars](https://img.shields.io/github/stars/cavaldos/Ice?style=flat-square)](https://github.com/cavaldos/Ice/stargazers)
