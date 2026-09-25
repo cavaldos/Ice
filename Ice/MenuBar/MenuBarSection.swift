@@ -60,6 +60,9 @@ final class MenuBarSection {
     /// A timer that manages rehiding the section.
     private var rehideTimer: Timer?
 
+    /// Whether state changes currently represent a durable user choice.
+    private var persistsStateChanges = true
+
     /// An event monitor that handles starting the rehide timer when the mouse
     /// is outside of the menu bar.
     private var rehideMonitor: UniversalEventMonitor?
@@ -136,9 +139,8 @@ final class MenuBarSection {
         // strand the sections hidden; the migration persists the outcome.
         controlItem.state = Self.initialState(for: shownDefaultsKey)
         controlItem.$state
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self else {
+                guard let self, self.persistsStateChanges else {
                     return
                 }
                 Defaults.set(state == .showItems, forKey: shownDefaultsKey)
@@ -226,15 +228,15 @@ final class MenuBarSection {
             guard let hiddenSection = appState.menuBarManager.section(withName: .hidden) else {
                 return
             }
-            controlItem.state = .showItems
-            hiddenSection.controlItem.state = .showItems
+            setState(.showItems, persist: true)
+            hiddenSection.setState(.showItems, persist: true)
         case .hidden:
             iceBarPanel?.close()
             guard let visibleSection = appState.menuBarManager.section(withName: .visible) else {
                 return
             }
-            controlItem.state = .showItems
-            visibleSection.controlItem.state = .showItems
+            setState(.showItems, persist: true)
+            visibleSection.setState(.showItems, persist: true)
         case .alwaysHidden:
             iceBarPanel?.close()
             guard
@@ -243,15 +245,27 @@ final class MenuBarSection {
             else {
                 return
             }
-            controlItem.state = .showItems
-            hiddenSection.controlItem.state = .showItems
-            visibleSection.controlItem.state = .showItems
+            setState(.showItems, persist: true)
+            hiddenSection.setState(.showItems, persist: true)
+            visibleSection.setState(.showItems, persist: true)
         }
         startRehideChecks()
     }
 
+    /// Updates this section's state with an explicit persistence intent.
+    private func setState(_ state: ControlItem.HidingState, persist: Bool) {
+        let previousPersistence = persistsStateChanges
+        persistsStateChanges = persist
+        controlItem.state = state
+        persistsStateChanges = previousPersistence
+    }
+
     /// Hides the section.
-    func hide() {
+    ///
+    /// - Parameter persistState: Whether the new state should become the
+    ///   user's stored choice. Automatic rehide is transient and must not
+    ///   replace an explicit reveal from a later launch.
+    func hide(persistState: Bool = true) {
         guard
             let appState,
             !isHidden
@@ -262,7 +276,7 @@ final class MenuBarSection {
         switch name {
         case _ where useIceBar:
             for section in appState.menuBarManager.sections {
-                section.controlItem.state = .hideItems
+                section.setState(.hideItems, persist: persistState)
             }
         case .visible:
             guard
@@ -271,9 +285,9 @@ final class MenuBarSection {
             else {
                 return
             }
-            controlItem.state = .hideItems
-            hiddenSection.controlItem.state = .hideItems
-            alwaysHiddenSection.controlItem.state = .hideItems
+            setState(.hideItems, persist: persistState)
+            hiddenSection.setState(.hideItems, persist: persistState)
+            alwaysHiddenSection.setState(.hideItems, persist: persistState)
         case .hidden:
             guard
                 let visibleSection = appState.menuBarManager.section(withName: .visible),
@@ -281,11 +295,11 @@ final class MenuBarSection {
             else {
                 return
             }
-            controlItem.state = .hideItems
-            visibleSection.controlItem.state = .hideItems
-            alwaysHiddenSection.controlItem.state = .hideItems
+            setState(.hideItems, persist: persistState)
+            visibleSection.setState(.hideItems, persist: persistState)
+            alwaysHiddenSection.setState(.hideItems, persist: persistState)
         case .alwaysHidden:
-            controlItem.state = .hideItems
+            setState(.hideItems, persist: persistState)
         }
         appState.allowShowOnHover()
         stopRehideChecks()
@@ -342,7 +356,7 @@ final class MenuBarSection {
                         }
                         if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                             Task {
-                                await self.hide()
+                                await self.hide(persistState: false)
                             }
                         } else {
                             Task {

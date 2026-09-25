@@ -323,6 +323,7 @@ struct MenuBarLayoutSettingsPane: View {
             // Force bypasses the windowIDs equality skip so frames are re-read.
             await appState.itemManager.cacheItemsIfNeeded(force: true)
             applySnapshotFromCache()
+            let snapshotBeforeDrag = sections
             guard let (item, fromKind) = removeItem(id: itemID) else {
                 await refresh()
                 return
@@ -351,8 +352,8 @@ struct MenuBarLayoutSettingsPane: View {
                 from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
                 to: destination
             )
-            await appState.itemManager.cacheItemsIfNeeded(force: true)
-            applySnapshotFromCache()
+            sections = snapshotBeforeDrag
+            await rescanAfterDrag()
             if sections[kind]?.contains(where: { $0.id == itemID }) == true {
                 // Landed — but the frame right after a drag can still be
                 // settling, so always do one settled re-scan instead of
@@ -427,6 +428,7 @@ struct MenuBarLayoutSettingsPane: View {
                 // Already in position — no drag needed.
                 return
             }
+            let snapshotBeforeDrag = sections
             // Remove the source first, then compute the insert position after
             // compaction (dragging forward shifts the target index down by 1 because the array is now shorter).
             var withoutSource = sections[fromKind] ?? []
@@ -452,8 +454,8 @@ struct MenuBarLayoutSettingsPane: View {
                 from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
                 to: destination
             )
-            await appState.itemManager.cacheItemsIfNeeded(force: true)
-            applySnapshotFromCache()
+            sections = snapshotBeforeDrag
+            await rescanAfterDrag()
             if hasLanded(itemID: itemID, targetID: targetID, fromKind: fromKind, toKind: toKind) {
                 // Same as section drops: one settled re-scan after landing,
                 // don't trust the immediate post-drag snapshot.
@@ -669,6 +671,36 @@ struct MenuBarLayoutSettingsPane: View {
         }
     }
 
+    /// Rebuild post-drag truth without trusting the optimistic SwiftUI state.
+    ///
+    /// macOS 27 clears the CGS item cache because per-item windows are gone,
+    /// so an AX scan is the only real source of fresh frames and membership.
+    private func rescanAfterDrag() async {
+        await appState.itemManager.cacheItemsIfNeeded(force: true)
+        let (hiddenX, alwaysHiddenX) = resolveDividers()
+        hiddenDividerX = hiddenX
+        alwaysHiddenDividerX = alwaysHiddenX
+
+        var axFallback = [MenuBarItemAXDiscovery.AXMenuBarItem]()
+        if appState.itemManager.itemCache.allItems.isEmpty, MenuBarItemAXDiscovery.isTrusted() {
+            let apps = NSWorkspace.shared.runningApplications
+            axFallback = await Task.detached(priority: .userInitiated) {
+                MenuBarItemAXDiscovery.discoverItems(in: apps)
+            }.value
+        }
+        let (grouped, midY) = buildSections(
+            hiddenX: hiddenX,
+            alwaysHiddenX: alwaysHiddenX,
+            axFallback: axFallback
+        )
+        if !grouped.isEmpty {
+            sections = grouped
+        }
+        if let midY {
+            anchorY = midY
+        }
+    }
+
     /// Fast synchronous divider read: prefers AX (own process, no system-wide
     /// walk), falls back to window.frame when AX isn't available yet.
     /// Same approach Ice Bar uses to avoid junk frames from the offscreen spacer park.
@@ -681,11 +713,15 @@ struct MenuBarLayoutSettingsPane: View {
             value.flatMap { $0 > 0 ? $0 : nil }
         }
         let manager = appState.menuBarManager
-        let hiddenX = settledMinX(axDividers.hidden)
+        let rawHiddenX = settledMinX(axDividers.hidden)
             ?? saneMinX(manager.section(withName: .hidden)?.controlItem.window?.frame.minX)
-        let alwaysHiddenX = settledMinX(axDividers.alwaysHidden)
+        let rawAlwaysHiddenX = settledMinX(axDividers.alwaysHidden)
             ?? saneMinX(manager.section(withName: .alwaysHidden)?.controlItem.window?.frame.minX)
-        return (hiddenX, alwaysHiddenX)
+        let dividers = MenuBarItemAXDiscovery.normalizedDividers(
+            hiddenDividerX: rawHiddenX,
+            alwaysHiddenDividerX: rawAlwaysHiddenX
+        )
+        return (dividers.hidden, dividers.alwaysHidden)
     }
 
     /// Build sections from the available CGS cache + current dividers, without scanning.

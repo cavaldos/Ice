@@ -335,7 +335,13 @@ final class ControlItem {
                     else {
                         return
                     }
-                    isVisible = shouldShow
+                    if #available(macOS 27, *) {
+                        // macOS 27 needs the control item to remain present as
+                        // the section's boundary even when its chevron is hidden.
+                        isVisible = true
+                    } else {
+                        isVisible = shouldShow
+                    }
                 }
                 .store(in: &c)
 
@@ -440,15 +446,26 @@ final class ControlItem {
                 button.isHighlighted = false
                 button.image = nil
             case .showItems:
-                isVisible = appState.settingsManager.advancedSettingsManager.showSectionDividers
+                let shouldShowDivider = appState.settingsManager.advancedSettingsManager.showSectionDividers
+                if #available(macOS 27, *) {
+                    // Keep the status item present on macOS 27 so disabling
+                    // the chevron cannot collapse a revealed section again.
+                    isVisible = true
+                } else {
+                    isVisible = shouldShowDivider
+                }
                 // Enable the cell, as it may have been previously disabled.
                 button.cell?.isEnabled = true
                 // Set the image based on the section name and the hiding state.
                 switch section.name {
                 case .hidden:
-                    button.image = ControlItemImage.builtin(.chevronLarge).nsImage(for: appState)
+                    button.image = shouldShowDivider
+                        ? ControlItemImage.builtin(.chevronLarge).nsImage(for: appState)
+                        : nil
                 case .alwaysHidden:
-                    button.image = ControlItemImage.builtin(.chevronSmall).nsImage(for: appState)
+                    button.image = shouldShowDivider
+                        ? ControlItemImage.builtin(.chevronSmall).nsImage(for: appState)
+                        : nil
                 case .visible: break
                 }
             }

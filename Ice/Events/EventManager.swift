@@ -275,7 +275,7 @@ extension EventManager {
             // If clicking caused a space change, don't bother with the window check.
             if Bridging.activeSpaceID != initialSpaceID {
                 for section in appState.menuBarManager.sections {
-                    section.hide()
+                    section.hide(persistState: false)
                 }
                 return
             }
@@ -325,7 +325,7 @@ extension EventManager {
 
             // If all the above checks have passed, hide all sections.
             for section in appState.menuBarManager.sections {
-                section.hide()
+                section.hide(persistState: false)
             }
         }
     }

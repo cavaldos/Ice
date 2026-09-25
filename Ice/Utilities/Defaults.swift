@@ -187,6 +187,7 @@ extension Defaults {
         case hasMigrated0_10_1 = "hasMigrated0_10_1"
         case hasMigrated0_11_10 = "hasMigrated0_11_10"
         case hasMigrated0_11_27 = "hasMigrated0_11_27"
+        case hasMigrated0_11_27CorrectiveReveal = "hasMigrated0_11_27CorrectiveReveal"
 
         // MARK: Deprecated
 

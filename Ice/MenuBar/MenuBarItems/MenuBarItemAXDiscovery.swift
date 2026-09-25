@@ -68,26 +68,36 @@ enum MenuBarItemAXDiscovery {
         guard let centerX else {
             return .visible
         }
-        // Swapped dividers (always-hidden right of hidden) are an invalid
-        // layout macOS 27 can leave behind (issue #17): the always-hidden
-        // boundary would swallow every icon. Ignore it so icons land in
-        // Hidden/Visible instead of all piling into Always-Hidden.
-        let alwaysHiddenX: CGFloat? = if
+        let dividers = normalizedDividers(
+            hiddenDividerX: hiddenDividerX,
+            alwaysHiddenDividerX: alwaysHiddenDividerX
+        )
+        if let alwaysHiddenX = dividers.alwaysHidden, centerX < alwaysHiddenX {
+            return .alwaysHidden
+        }
+        if let hiddenX = dividers.hidden, centerX < hiddenX {
+            return .hidden
+        }
+        return .visible
+    }
+
+    /// Normalizes invalid swapped divider geometry for every section-boundary use.
+    ///
+    /// macOS 27 can leave the Always-Hidden divider right of the Hidden divider.
+    /// Ignoring only that boundary for classification while using it for drop
+    /// bounds would still target the wrong section.
+    static func normalizedDividers(
+        hiddenDividerX: CGFloat?,
+        alwaysHiddenDividerX: CGFloat?
+    ) -> (hidden: CGFloat?, alwaysHidden: CGFloat?) {
+        if
             let alwaysHiddenDividerX,
             let hiddenDividerX,
             alwaysHiddenDividerX > hiddenDividerX
         {
-            nil
-        } else {
-            alwaysHiddenDividerX
+            return (hiddenDividerX, nil)
         }
-        if let alwaysHiddenX, centerX < alwaysHiddenX {
-            return .alwaysHidden
-        }
-        if let hiddenDividerX, centerX < hiddenDividerX {
-            return .hidden
-        }
-        return .visible
+        return (hiddenDividerX, alwaysHiddenDividerX)
     }
 
     /// Returns true when the app has been granted Accessibility permission.

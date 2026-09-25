@@ -32,6 +32,7 @@ extension MigrationManager {
             manager.migrate0_10_1(),
             manager.migrate0_11_10(),
             manager.migrate0_11_27(),
+            manager.migrate0_11_27CorrectiveReveal(),
         ]
 
         for result in results {
@@ -324,17 +325,45 @@ extension MigrationManager {
         guard !Defaults.bool(forKey: .hasMigrated0_11_27) else {
             return .success
         }
-        defer {
-            Defaults.set(true, forKey: .hasMigrated0_11_27)
-            Logger.migration.info("Successfully migrated to 0.11.27 settings")
-        }
         guard #available(macOS 27, *) else {
             return .success
         }
         Defaults.set(true, forKey: .showVisibleSection)
         Defaults.set(true, forKey: .showHiddenSection)
         Defaults.set(true, forKey: .showAlwaysHiddenSection)
+        Defaults.set(true, forKey: .hasMigrated0_11_27)
+        Defaults.set(true, forKey: .hasMigrated0_11_27CorrectiveReveal)
+        Logger.migration.info("Successfully migrated to 0.11.27 settings")
         return .success
+    }
+
+    /// Repairs the migration flag written by versions that marked 0.11.27
+    /// complete on every macOS version, including macOS 26.
+    ///
+    /// This runs only on macOS 27, only when the old flag is present, and only
+    /// until the corrective marker is written. A deliberate later choice is
+    /// therefore never overwritten on subsequent launches.
+    private func migrate0_11_27CorrectiveReveal() -> MigrationResult {
+        guard #available(macOS 27, *) else {
+            return .success
+        }
+        guard
+            Defaults.bool(forKey: .hasMigrated0_11_27),
+            !Defaults.bool(forKey: .hasMigrated0_11_27CorrectiveReveal)
+        else {
+            return .success
+        }
+        Self.revealSections27()
+        Defaults.set(true, forKey: .hasMigrated0_11_27CorrectiveReveal)
+        Logger.migration.info("Applied corrective 0.11.27 section reveal")
+        return .success
+    }
+
+    /// Reveals the three sections used by the macOS 27 recovery path.
+    private static func revealSections27() {
+        Defaults.set(true, forKey: .showVisibleSection)
+        Defaults.set(true, forKey: .showHiddenSection)
+        Defaults.set(true, forKey: .showAlwaysHiddenSection)
     }
 
     /// Seeds the 0.11.27 section reveal synchronously (issue #17).
@@ -344,18 +373,22 @@ extension MigrationManager {
     /// whatever runs first, the sections initialize shown exactly once, and
     /// the stored choice wins on every later launch.
     static func seedRevealSections27() {
-        guard !Defaults.bool(forKey: .hasMigrated0_11_27) else {
-            return
-        }
         guard #available(macOS 27, *) else {
-            Defaults.set(true, forKey: .hasMigrated0_11_27)
             return
         }
-        Defaults.set(true, forKey: .showVisibleSection)
-        Defaults.set(true, forKey: .showHiddenSection)
-        Defaults.set(true, forKey: .showAlwaysHiddenSection)
-        Defaults.set(true, forKey: .hasMigrated0_11_27)
-        Logger.migration.info("Seeded 0.11.27 section reveal")
+        if Defaults.bool(forKey: .hasMigrated0_11_27) {
+            guard !Defaults.bool(forKey: .hasMigrated0_11_27CorrectiveReveal) else {
+                return
+            }
+            Self.revealSections27()
+            Defaults.set(true, forKey: .hasMigrated0_11_27CorrectiveReveal)
+            Logger.migration.info("Seeded corrective 0.11.27 section reveal")
+        } else {
+            Self.revealSections27()
+            Defaults.set(true, forKey: .hasMigrated0_11_27)
+            Defaults.set(true, forKey: .hasMigrated0_11_27CorrectiveReveal)
+            Logger.migration.info("Seeded 0.11.27 section reveal")
+        }
     }
 }
 
