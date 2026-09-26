@@ -66,16 +66,24 @@ class Permission: ObservableObject, Identifiable {
     /// Sets up the internal observers for the permission.
     private func configureCancellables() {
         // ponytail: no Just(.now) — init already did one sync check(); an immediate
-        // second scan (full menu-bar CG/AX walk for Screen Recording) doubles boot
-        // cost, and stopAllChecks() in performSetup cancels this timer anyway when
-        // permissions are already granted.
+        // second scan (a TCC lookup plus a window-server walk for Screen Recording)
+        // doubles boot cost. The timer itself is cancelled for required
+        // permissions once they are granted; optional ones keep polling at this
+        // rate, with each check rate limited inside ScreenCapture.
         timerCancellable = Timer.publish(every: 1, on: .main, in: .default)
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else {
                     return
                 }
-                hasPermission = check()
+                // Only assign on an actual change: @Published fires
+                // objectWillChange on every set, and these timers keep running
+                // for optional permissions, so unconditional assignment
+                // invalidated SwiftUI once a second.
+                let isGranted = check()
+                if isGranted != hasPermission {
+                    hasPermission = isGranted
+                }
             }
     }
 
@@ -109,18 +117,11 @@ class Permission: ObservableObject, Identifiable {
 
     /// Stops the periodic permission check, keeping one-shot observers alive.
     ///
-    /// Called automatically once permissions are sufficient, so a skipped
-    /// launch still notices a later grant from Settings.
+    /// Called automatically once required permissions are sufficient, so a
+    /// skipped launch still notices a later grant from Settings.
     func stopTimerCheck() {
         timerCancellable?.cancel()
         timerCancellable = nil
-    }
-
-    /// Stops running the permission check.
-    func stopCheck() {
-        stopTimerCheck()
-        hasPermissionCancellable?.cancel()
-        hasPermissionCancellable = nil
     }
 }
 

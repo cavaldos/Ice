@@ -203,11 +203,13 @@ final class AppState: ObservableObject {
         // updateStatusItem/add-remove cycle at boot.
         settingsManager.performSetup()
         configureCancellables()
-        // Only stop checking once all permissions are granted; if the user
-        // skipped while some are still missing, keep the timer so we notice
-        // when they grant later in Settings.
+        // Only stop checking the required permissions once they are granted;
+        // if the user skipped while some are still missing, keep the timer so we
+        // notice when they grant later in Settings. Optional permissions keep
+        // their timer either way — they can be granted at any point, and this is
+        // what notices it.
         if permissionsManager.permissionsState != .missingPermissions {
-            permissionsManager.stopAllChecks()
+            permissionsManager.stopTimerChecks()
         }
         menuBarManager.performSetup()
         appearanceManager.performSetup()
