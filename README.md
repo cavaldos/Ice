@@ -42,7 +42,17 @@ brew tap cavaldos/tap
 brew install cavaldos/tap/ice
 ```
 
-**Manual:** download `Ice.zip` from the [latest release](https://github.com/cavaldos/Ice/releases/latest) and move the unzipped app into `/Applications`.
+**Manual:**
+
+1. Download `Ice.zip` from the [latest release](https://github.com/cavaldos/Ice/releases/latest).
+2. Unzip it and move `Ice.app` into `/Applications`.
+3. Clear the quarantine flag — releases are ad-hoc signed and not notarized, so Gatekeeper would otherwise block the first launch:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Ice.app
+```
+
+Then open Ice and grant **Accessibility** and **Screen Recording** in System Settings (see [Permissions](#permissions)).
 
 For local development, see [script/README.md](script/README.md).
 
@@ -125,7 +135,11 @@ Ice needs two grants in **System Settings > Privacy & Security**:
 > Or by hand: quit Ice, run `tccutil reset Accessibility com.jordanbaird.Ice`
 > and `tccutil reset ScreenCapture com.jordanbaird.Ice`, relaunch, re-grant.
 
-Because the builds are ad-hoc signed rather than notarized, Gatekeeper may also refuse the first launch. Right-click the app and choose **Open**, or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/Ice.app`.
+Because the builds are ad-hoc signed rather than notarized, Gatekeeper may also refuse the first launch. Right-click the app and choose **Open**, or clear the quarantine flag:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Ice.app
+```
 
 ## Features
 
