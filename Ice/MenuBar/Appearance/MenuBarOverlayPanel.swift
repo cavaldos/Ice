@@ -401,6 +401,11 @@ final class MenuBarOverlayPanelContentView: NSView {
     /// the rescan confirms the real width.
     private static var predictiveTarget = [CGDirectDisplayID: CGFloat]()
 
+    /// When the last local (quick) leading-edge measure ran per display.
+    ///
+    /// Rate limit so one toggle can't queue a dozen overlapping AX walks.
+    private static var trailingQuickRanAt = [CGDirectDisplayID: Date]()
+
     /// Currently drawn trailing width per display.
     ///
     /// Expands snap to the target instantly, but collapses ease toward it
@@ -424,10 +429,10 @@ final class MenuBarOverlayPanelContentView: NSView {
 
     /// UserDefaults key for persisted trailing widths.
     ///
-    /// Bumped to v2: v1 learnings captured while dividers were misordered
-    /// (or before the AH default change) predict a stale pill that trails
-    /// the icons by a beat. Relearn from the current arrangement instead.
-    private static let trailingWidthsDefaultsKey = "Ice.TrailingWidths.v2"
+    /// Bumped to v3: v2 learned widths captured mid-transition (and with
+    /// Ice's own control window counted as a status icon) predict a pill ~110pt
+    /// too wide that never collapses. Relearn from the current arrangement.
+    private static let trailingWidthsDefaultsKey = "Ice.TrailingWidths.v3"
 
     /// Whether the trailing cluster on the display currently contains a
     /// full-bleed system background (screen-recording / screen-sharing pill).
@@ -529,6 +534,36 @@ final class MenuBarOverlayPanelContentView: NSView {
         }
         let width = concealed ? settledConcealedWidth[display] : settledRevealedWidth[display]
         return width ?? (concealed ? settledRevealedWidth[display] : settledConcealedWidth[display])
+    }
+
+    /// Measures the leading edge locally and applies it as the drawn width.
+    ///
+    /// Split out of `refreshTrailingStatusWidth` so the quick measure can also
+    /// run while a full sweep is in flight (the sweep blocks on nothing, but it
+    /// takes ~1s; the local walk is ~0.1s and independent of it).
+    private func applyQuickLeadingEdge(for display: CGDirectDisplayID, verdict: EdgeVerdict) {
+        // ponytail: one quick measure per 0.2s per display. A toggle fires
+        // $isVisible + $windowFrame for every control item (5+ calls), which
+        // was 5 overlapping AX walks for the same answer.
+        let now = Date()
+        guard Self.trailingQuickRanAt[display].map({ now.timeIntervalSince($0) > 0.2 }) ?? true else {
+            return
+        }
+        Self.trailingQuickRanAt[display] = now
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let quickWidth = Self.quickLeadingEdgeWidth(for: display, verdict: verdict) else {
+                Logger.overlayPanel.debug("Quick edge \(display): verdict=\(verdict) -> nil")
+                return
+            }
+            Logger.overlayPanel.debug("Quick edge \(display): verdict=\(verdict) -> \(quickWidth)")
+            DispatchQueue.main.async {
+                // Cache only — never pin `predictiveTarget` from a local walk:
+                // a walk taken while the section is still sliding measures
+                // icons mid-flight, and pinning that made the pill stick.
+                Self.trailingWidthCache[display] = (quickWidth, Date())
+                self?.needsDisplay = true
+            }
+        }
     }
 
     /// Whether the hidden section is currently concealed, if known.
@@ -708,7 +743,7 @@ final class MenuBarOverlayPanelContentView: NSView {
         // edge, ~10x cheaper than a full sweep. Catches appeared/removed
         // icons within half a second instead of leaving them floating off
         // the pill until the next toggle or backstop tick.
-        Timer.publish(every: 0.5, on: .main, in: .common)
+        Timer.publish(every: 0.25, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkTrailingEdge()
@@ -725,7 +760,7 @@ final class MenuBarOverlayPanelContentView: NSView {
                 .publisher(for: NSWorkspace.didTerminateApplicationNotification)
                 .mapToVoid()
         )
-        .debounce(for: 0.4, scheduler: DispatchQueue.main)
+        .debounce(for: 0.15, scheduler: DispatchQueue.main)
         .sink { [weak self] _ in
             self?.checkTrailingEdge()
         }
@@ -947,13 +982,8 @@ final class MenuBarOverlayPanelContentView: NSView {
             }
             if totalWidth > 0 {
                 var position = rect.maxX - totalWidth
-                if shouldInset {
-                    position += 4
-                    if info.trailing.trailingEndCap == .square {
-                        position -= appearanceManager.menuBarInsetAmount
-                    }
-                } else {
-                    position -= 7
+                if shouldInset, info.trailing.trailingEndCap == .square {
+                    position -= appearanceManager.menuBarInsetAmount
                 }
                 guard position < rect.maxX else {
                     return .zero
@@ -973,13 +1003,8 @@ final class MenuBarOverlayPanelContentView: NSView {
             }
             Self.logSplitFallbackOnce(for: screen.displayID, side: "trailing")
             var position = rightArea.minX - screen.frame.minX
-            if shouldInset {
-                position += 4
-                if info.trailing.trailingEndCap == .square {
-                    position -= appearanceManager.menuBarInsetAmount
-                }
-            } else {
-                position -= 7
+            if shouldInset, info.trailing.trailingEndCap == .square {
+                position -= appearanceManager.menuBarInsetAmount
             }
             let clamped = min(max(position, rect.minX), rect.maxX)
             guard clamped < rect.maxX else {
@@ -1135,16 +1160,19 @@ final class MenuBarOverlayPanelContentView: NSView {
             Self.predictiveTarget[display] = remembered
         }
         Self.trailingBurstUntil[display] = Date().addingTimeInterval(1.5)
-        if concealed == true, let current = Self.displayedTrailingWidth[display] {
-            // Hiding: the remembered width may be stale (learned while a
-            // share/record pill was up). Re-measure right of the drawn edge
-            // immediately instead of holding the old width for the burst.
-            let bounds = CGDisplayBounds(display)
-            refreshTrailingStatusWidth(
-                for: display,
-                force: true,
-                quick: .removed(edgeX: bounds.maxX - current)
-            )
+        if let current = Self.displayedTrailingWidth[display] {
+            let edgeX = CGDisplayBounds(display).maxX - current
+            if concealed == true {
+                // Hiding: the remembered width may be stale (learned while a
+                // share/record pill was up). Re-measure right of the drawn edge
+                // immediately instead of holding the old width for the burst.
+                refreshTrailingStatusWidth(for: display, force: true, quick: .removed(edgeX: edgeX))
+            } else {
+                // Revealing: the divider + the section's icons land just left of
+                // the drawn edge. Probe outward from it now — waiting for the
+                // full sweep left the pill ~1s behind the icons appearing.
+                refreshTrailingStatusWidth(for: display, force: true, quick: .added(hitX: edgeX))
+            }
         } else {
             refreshTrailingStatusWidth(for: display, force: true)
         }
@@ -1161,7 +1189,16 @@ final class MenuBarOverlayPanelContentView: NSView {
     private func refreshTrailingStatusWidth(for display: CGDirectDisplayID, force: Bool, quick verdict: EdgeVerdict? = nil) {
         let cached = Self.trailingWidthCache[display]
         let isStale = force || cached.map { Date().timeIntervalSince($0.date) > Self.trailingWidthTTL } ?? true
-        guard isStale, !Self.trailingWidthScanInFlight.contains(display) else {
+        guard isStale else {
+            return
+        }
+        guard !Self.trailingWidthScanInFlight.contains(display) else {
+            // A sweep is already running, but the cheap local measure is
+            // independent of it: skipping it here is what made the pill lag
+            // behind the icons whenever a TTL scan happened to be in flight.
+            if let verdict {
+                applyQuickLeadingEdge(for: display, verdict: verdict)
+            }
             return
         }
         Self.trailingWidthScanInFlight.insert(display)
@@ -1169,17 +1206,11 @@ final class MenuBarOverlayPanelContentView: NSView {
         // Never collapse to 0 while a stale-but-sane value exists: a
         // slightly wrong pill is far less jarring than a disappearing one.
         let previous = cached?.width ?? Self.settledWidth(for: display, concealed: concealed) ?? 0
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             if let verdict {
                 // Fast local re-measure ahead of the full sweep. Main-queue
                 // FIFO applies this before the sweep's completion below.
-                if let quickWidth = Self.quickLeadingEdgeWidth(for: display, verdict: verdict) {
-                    DispatchQueue.main.async { [weak self] in
-                        Self.trailingWidthCache[display] = (quickWidth, Date())
-                        Self.predictiveTarget[display] = quickWidth
-                        self?.needsDisplay = true
-                    }
-                }
+                self?.applyQuickLeadingEdge(for: display, verdict: verdict)
             }
             let result = Self.trailingStatusWidthFallback(for: display)
             let width = result?.width ?? previous
@@ -1203,6 +1234,14 @@ final class MenuBarOverlayPanelContentView: NSView {
                     return
                 }
                 self.needsDisplay = true
+                Logger.overlayPanel.debug("Scan land: measured=\(width) drawn=\(Self.displayedTrailingWidth[display] ?? -1) predictive=\(Self.predictiveTarget[display] ?? -1) concealed=\(self.isConcealed() ?? true)")
+                if let result {
+                    // A real measurement outranks any prediction. Leaving
+                    // `predictiveTarget` in place for the rest of the burst
+                    // pinned the pill at the pre-toggle width forever once a
+                    // mid-transition scan had set it (measured 413 / drawn 524).
+                    Self.predictiveTarget.removeValue(forKey: display)
+                }
                 if let until = Self.trailingBurstUntil[display], Date() < until {
                     self.refreshTrailingStatusWidth(for: display, force: true)
                 } else {
@@ -1211,7 +1250,10 @@ final class MenuBarOverlayPanelContentView: NSView {
                     // it so the next toggle (and next launch) can predict
                     // instantly, and drop the prediction it was gliding toward.
                     // Re-read: the toggle may have flipped again mid-scan.
-                    if width > 0 {
+                    // ponytail: learn only from a real sweep — the `previous`
+                    // fallback re-learned the stale value it was supposed to
+                    // correct, which is how a wrong width became permanent.
+                    if width > 0, result != nil {
                         let fresh = self.isConcealed() ?? concealed
                         if fresh ?? true {
                             Self.settledConcealedWidth[display] = width
@@ -1293,6 +1335,13 @@ final class MenuBarOverlayPanelContentView: NSView {
             frame.width > 0, frame.height > 0, frame.height <= 50,
             frame.minY <= displayBounds.origin.y + 10
         else {
+            return nil
+        }
+        if let pid, pid == ProcessInfo.processInfo.processIdentifier, frame.width > 200 {
+            // Ice's own control item: the expanded spacer that pushes a hidden
+            // section offscreen is a 300–700pt placeholder, not a status icon.
+            // Measuring it inflated the pill by ~110pt and kept it from ever
+            // collapsing back after a toggle.
             return nil
         }
         return frame
@@ -1581,6 +1630,7 @@ final class MenuBarOverlayPanelContentView: NSView {
                         Self.trailingWidthCache[display]?.date = Date()
                     }
                 } else if !Self.isStripOccluded(display: display) {
+                    Logger.overlayPanel.debug("Edge check \(display): expected=\(expected) verdict=\(verdict)")
                     Self.trailingBurstUntil[display] = Date().addingTimeInterval(1.0)
                     self.needsDisplay = true
                     self.refreshTrailingStatusWidth(for: display, force: true, quick: verdict)
@@ -1675,6 +1725,10 @@ final class MenuBarOverlayPanelContentView: NSView {
             let stopX = max(displayBounds.minX, hitX - 200)
             var misses = 0
             var minX = hitX
+            // ponytail: a walk that never hit anything must not return — the
+            // starting guess would read as a ~15pt wider pill that the sweep
+            // then snaps back, i.e. a visible breath right after every toggle.
+            var sawHit = false
             while x > stopX, misses < 3 {
                 var found: CGRect?
                 for row in rows {
@@ -1684,6 +1738,7 @@ final class MenuBarOverlayPanelContentView: NSView {
                     }
                 }
                 if let found {
+                    sawHit = true
                     minX = min(minX, found.minX)
                     misses = 0
                     x = min(found.minX - 2, x - 8)
@@ -1691,6 +1746,9 @@ final class MenuBarOverlayPanelContentView: NSView {
                     misses += 1
                     x -= 16
                 }
+            }
+            guard sawHit else {
+                return nil
             }
             axLeft = minX
         }
@@ -1703,7 +1761,10 @@ final class MenuBarOverlayPanelContentView: NSView {
         for indicator in indicators where indicator.maxX >= axLeft - 80 {
             axLeft = min(axLeft, indicator.minX - 3)
         }
-        let pad: CGFloat = (!indicators.isEmpty || hasScreenCaptureIndicator()) ? 12 : 10
+        // ponytail: half the original 10/12pt pad — a full pad left a blank
+        // strip before the leftmost icon, zero hugged the frame so tight the
+        // pill looked clipped. 5 keeps a small, even inset on both ends.
+        let pad: CGFloat = (!indicators.isEmpty || hasScreenCaptureIndicator()) ? 4 : 3
         let leftmostX = max(displayBounds.minX, axLeft - pad)
         let width = displayBounds.maxX - leftmostX
         let scanWindow = min(displayBounds.width, 1100)
@@ -1766,21 +1827,16 @@ final class MenuBarOverlayPanelContentView: NSView {
         }
         // Fine sweep for a narrow/off-row straggler left of the coarse edge
         // (e.g. an active screen-sharing pill), then pad left so the pill
-        // tucks under system-drawn active backgrounds that run wider than
-        // their AX frame. Over-covering wallpaper by a few points is
-        // invisible; leaving an icon off the pill is not.
+        // tucks under the leading icon.
         let refined = refineLeadingEdge(leftOf: coarseX, displayBounds: displayBounds, appMenuPid: appMenuPid)
         maxHeight = max(maxHeight, refined.maxHeight)
         // A full-bleed system pill (screen sharing/recording) draws taller than a
-        // normal icon and wider than its AX frame: go full height (see
-        // shapePath) and pad extra left so the system paint never peeks out.
-        // Measured: the pill paint overhangs ~9pt per side of its AX frame,
-        // so 12 covers it with a small margin. 20 left a visible black tongue
-        // past the icon (Discord share) — don't raise without re-measuring.
+        // normal icon: go full height (see shapePath). Its wider system paint is
+        // unioned in below via `captureIndicatorFrames`.
         let barHeight = NSScreen.screens.first(where: { $0.displayID == display })?.getMenuBarHeight() ?? 26
         let fullBleed = maxHeight >= barHeight - 4
         let captureActive = hasScreenCaptureIndicator()
-        let pad: CGFloat = (fullBleed || captureActive) ? 12 : 10
+        let pad: CGFloat = (fullBleed || captureActive) ? 4 : 3
         var axLeft = refined.x
         // The system share/record paint is WindowServer-drawn and AX-invisible,
         // so the sweep above always anchors at its right-hand neighbour.

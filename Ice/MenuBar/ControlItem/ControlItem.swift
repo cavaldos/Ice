@@ -335,13 +335,10 @@ final class ControlItem {
                     else {
                         return
                     }
-                    if #available(macOS 27, *) {
-                        // macOS 27 needs the control item to remain present as
-                        // the section's boundary even when its chevron is hidden.
-                        isVisible = true
-                    } else {
-                        isVisible = shouldShow
-                    }
+                    // ponytail: the divider collapses to a 1pt sliver instead of
+                    // disappearing, so it stays in the bar as the section
+                    // boundary (AX lookup still finds it) without holding a slot.
+                    isVisible = shouldShow
                 }
                 .store(in: &c)
 
@@ -447,13 +444,10 @@ final class ControlItem {
                 button.image = nil
             case .showItems:
                 let shouldShowDivider = appState.settingsManager.advancedSettingsManager.showSectionDividers
-                if #available(macOS 27, *) {
-                    // Keep the status item present on macOS 27 so disabling
-                    // the chevron cannot collapse a revealed section again.
-                    isVisible = true
-                } else {
-                    isVisible = shouldShowDivider
-                }
+                // ponytail: same sliver collapse as the $showSectionDividers sink
+                // — a `Lengths.standard` item with no image left a ~40pt gap
+                // between the revealed section and the next one.
+                isVisible = shouldShowDivider
                 // Enable the cell, as it may have been previously disabled.
                 button.cell?.isEnabled = true
                 // Set the image based on the section name and the hiding state.
