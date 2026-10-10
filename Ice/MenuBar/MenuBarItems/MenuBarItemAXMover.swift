@@ -17,6 +17,31 @@ import Cocoa
 /// (origin bottom-left) here; mixing them up drops the item in the wrong spot
 /// and a rescan then shows the old position (looking like it "snapped back").
 enum MenuBarItemAXMover {
+    static func matchingWindowIndex(for frame: CGRect, in windows: [CGRect]) -> Int? {
+        guard !frame.isEmpty, !frame.isNull, !frame.isInfinite,
+              [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
+        else {
+            return nil
+        }
+        let matches = windows.indices.filter { index in
+            let window = windows[index]
+            return !window.isEmpty && !window.isInfinite && window.contains(frame) &&
+                abs(window.midX - frame.midX) <= 0.5 && abs(window.midY - frame.midY) <= 0.5 &&
+                window.width - frame.width <= 32 && window.height - frame.height <= 32
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    /// Selects a visible part of an AX frame, never a point inside the notch.
+    static func dragPoint(in frame: CGRect, usableRegions: [CGRect]) -> CGPoint? {
+        let intersections: [CGRect] = usableRegions.map { frame.intersection($0) }
+            .filter { !$0.isNull && $0.width >= 4 && $0.height >= 4 }
+        let visible = intersections.max { left, right in
+            left.width * left.height < right.width * right.height
+        }
+        return visible.map { CGPoint(x: $0.midX, y: $0.midY) }
+    }
+
     /// Drags from `source` to `destination` while holding Command.
     ///
     /// Quartz coordinates (origin top-left). Runs in the background, takes well
@@ -39,14 +64,22 @@ enum MenuBarItemAXMover {
             }
 
             func post(_ type: CGEventType, at point: CGPoint, flags: CGEventFlags) {
-                guard
-                    let event = CGEvent(
+                let event: CGEvent?
+                if type == .flagsChanged {
+                    // CGEvent's mouse initializer rejects flagsChanged. Use a
+                    // keyboard event so AppKit sees a real Command-key transition.
+                    event = CGEvent(keyboardEventSource: eventSource, virtualKey: 55, keyDown: flags.contains(.maskCommand))
+                    event?.type = .flagsChanged
+                    event?.location = point
+                } else {
+                    event = CGEvent(
                         mouseEventSource: eventSource,
                         mouseType: type,
                         mouseCursorPosition: point,
                         mouseButton: .left
                     )
-                else {
+                }
+                guard let event else {
                     return
                 }
                 event.flags = flags

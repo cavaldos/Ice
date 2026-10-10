@@ -21,6 +21,9 @@ struct MenuBarLayoutSettingsPane: View {
     @State private var isRefreshing = false
     /// Guards against overlapping drags: two concurrent Command-drags would fight over the mouse.
     @State private var isMoving = false
+    @State private var isPresented = false
+    @State private var ownsLayoutSession = false
+    @State private var moveFailure: String?
     /// IDs of icons currently being moved in the background: the UI updates
     /// optimistically right away, with a small badge on each icon showing
     /// it's syncing, so the whole list doesn't freeze.
@@ -85,6 +88,18 @@ struct MenuBarLayoutSettingsPane: View {
                 .disabled(isRefreshing)
             }
 
+            if ownsLayoutSession {
+                Text("Menu bar items stay shown while you arrange them here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let moveFailure {
+                Label(moveFailure, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             if sections.isEmpty {
                 if !hasAccessibilityPermission {
                     accessibilityPrompt
@@ -118,6 +133,19 @@ struct MenuBarLayoutSettingsPane: View {
         }
         .padding(20)
         .task {
+            isPresented = true
+            while !ownsLayoutSession {
+                guard isPresented, !Task.isCancelled else {
+                    return
+                }
+                ownsLayoutSession = appState.menuBarManager.beginLayoutEditing()
+                if !ownsLayoutSession {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            guard !isMoving else {
+                return
+            }
             // Paint immediately from the available cache (the 5s background timer
             // keeps pumping itemCache), then reconcile with a background scan —
             // opening the tab shows icons right away, no Refresh tap needed.
@@ -134,10 +162,20 @@ struct MenuBarLayoutSettingsPane: View {
             applySnapshotFromCache()
         }
         .onDisappear {
+            isPresented = false
+            endLayoutEditingIfNeeded()
             // Stop the divider poll + icon retry when leaving the tab.
             dividerPollGeneration += 1
             iconRetryGeneration += 1
         }
+    }
+
+    private func endLayoutEditingIfNeeded() {
+        guard !isPresented, !isMoving, ownsLayoutSession else {
+            return
+        }
+        appState.menuBarManager.endLayoutEditing()
+        ownsLayoutSession = false
     }
 
     private func sectionView(meta: SectionMeta, items: [RowItem]) -> some View {
@@ -171,12 +209,18 @@ struct MenuBarLayoutSettingsPane: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onDrop(of: [.text], isTargeted: .constant(false), perform: { providers in
+                #if DEBUG
+                NSLog("IceLayout section drop target=%@ moving=%d targetID=%@", String(describing: meta.kind), isMoving, dropTargetID ?? "nil")
+                #endif
                 // When hovering an icon, let that item handle the drop (positional
                 // insert); the section only handles drops into empty space (append to the group's end).
                 guard dropTargetID == nil, !isMoving, let provider = providers.first else {
                     return false
                 }
                 _ = provider.loadObject(ofClass: NSString.self) { string, _ in
+                    #if DEBUG
+                    NSLog("IceLayout section payload=%@", String(describing: string))
+                    #endif
                     guard let id = string as? String else {
                         return
                     }
@@ -245,12 +289,18 @@ struct MenuBarLayoutSettingsPane: View {
             }
         }
         .onDrag {
-            NSItemProvider(object: item.id as NSString)
+            #if DEBUG
+            NSLog("IceLayout drag started id=%@", item.id)
+            #endif
+            return NSItemProvider(object: item.id as NSString)
         }
         .onDrop(
             of: [.text],
             isTargeted: dropTargetBinding(for: item.id),
             perform: { providers in
+                #if DEBUG
+                NSLog("IceLayout item drop target=%@ moving=%d", item.id, isMoving)
+                #endif
                 guard !isMoving, let provider = providers.first else {
                     return false
                 }
@@ -310,19 +360,27 @@ struct MenuBarLayoutSettingsPane: View {
     /// optimistic position behind.
     /// The `isMoving` guard blocks a second drag from fighting over the mouse.
     private func drop(itemID: String, to kind: MenuBarItemAXDiscovery.SectionKind) async {
-        guard !isMoving else {
+        #if DEBUG
+        NSLog("IceLayout section request id=%@ target=%@ presented=%d owned=%d moving=%d", itemID, String(describing: kind), isPresented, ownsLayoutSession, isMoving)
+        #endif
+        guard !isMoving, isPresented, ownsLayoutSession else {
             return
         }
+        moveFailure = nil
         isMoving = true
         pendingMoves.insert(itemID)
         defer {
             pendingMoves.remove(itemID)
             isMoving = false
+            endLayoutEditingIfNeeded()
         }
         for _ in 0..<3 {
-            // Force bypasses the windowIDs equality skip so frames are re-read.
-            await appState.itemManager.cacheItemsIfNeeded(force: true)
-            applySnapshotFromCache()
+            // An empty CGS cache needs a fresh AX scan too: revealing the
+            // originals changes their frames without changing their IDs.
+            await rescanAfterDrag()
+            guard isPresented, !Task.isCancelled else {
+                return
+            }
             let snapshotBeforeDrag = sections
             guard let (item, fromKind) = removeItem(id: itemID) else {
                 await refresh()
@@ -332,8 +390,6 @@ struct MenuBarLayoutSettingsPane: View {
                 // Already in the destination group; put it back where it was,
                 // then re-scan so the UI is truth, not the optimistic append.
                 sections[kind, default: []].append(item)
-                pendingMoves.remove(itemID)
-                isMoving = false
                 await refreshAfterDrop()
                 return
             }
@@ -348,27 +404,33 @@ struct MenuBarLayoutSettingsPane: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 sections[kind, default: []].append(item)
             }
-            await MenuBarItemAXMover.commandDrag(
-                from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
-                to: destination
-            )
+            #if DEBUG
+            NSLog("IceLayout native drag source=%@ destination=%@ hidden=%@ always=%@", NSStringFromRect(sourceFrame), NSStringFromPoint(destination), String(describing: hiddenDividerX), String(describing: alwaysHiddenDividerX))
+            #endif
+            if let source = dragSourcePoint(for: item) {
+                await MenuBarItemAXMover.commandDrag(from: source, to: destination)
+            } else if !(await moveOccludedItem(item, to: kind)) {
+                sections = snapshotBeforeDrag
+                await rescanAfterDrag()
+                return
+            }
             sections = snapshotBeforeDrag
             await rescanAfterDrag()
+            #if DEBUG
+            NSLog("IceLayout result group=%@ frame=%@", String(describing: findItem(id: itemID)?.kind), String(describing: findItem(id: itemID)?.item.quartzFrame))
+            #endif
             if sections[kind]?.contains(where: { $0.id == itemID }) == true {
                 // Landed — but the frame right after a drag can still be
                 // settling, so always do one settled re-scan instead of
                 // trusting this snapshot. Otherwise the UI sometimes stays
                 // wrong until the user hits Refresh by hand.
-                pendingMoves.remove(itemID)
-                isMoving = false
                 await refreshAfterDrop()
                 return
             }
             try? await Task.sleep(for: .milliseconds(400))
         }
-        pendingMoves.remove(itemID)
-        isMoving = false
         await refreshAfterDrop()
+        moveFailure = "macOS did not confirm this move. Press Refresh to check the current layout."
     }
 
     /// Remove the item from its current group, returning the item and its old group.
@@ -399,22 +461,29 @@ struct MenuBarLayoutSettingsPane: View {
     /// then verifies the landing — a missed drag is retried with fresh frames
     /// instead of snapping back and forcing the user to redo it by hand.
     private func drop(itemID: String, onto targetID: String) async {
-        guard !isMoving else {
+        #if DEBUG
+        NSLog("IceLayout item request id=%@ target=%@ presented=%d owned=%d moving=%d", itemID, targetID, isPresented, ownsLayoutSession, isMoving)
+        #endif
+        guard !isMoving, isPresented, ownsLayoutSession else {
             return
         }
         guard itemID != targetID else {
             return
         }
+        moveFailure = nil
         isMoving = true
         pendingMoves.insert(itemID)
         defer {
             pendingMoves.remove(itemID)
             isMoving = false
             dropTargetID = nil
+            endLayoutEditingIfNeeded()
         }
         for _ in 0..<3 {
-            await appState.itemManager.cacheItemsIfNeeded(force: true)
-            applySnapshotFromCache()
+            await rescanAfterDrag()
+            guard isPresented, !Task.isCancelled else {
+                return
+            }
             guard
                 let (item, fromKind, fromIndex) = findItem(id: itemID),
                 let target = findItem(id: targetID),
@@ -450,27 +519,139 @@ struct MenuBarLayoutSettingsPane: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 sections[toKind, default: []].insert(item, at: min(insertIndex, toItems.count))
             }
-            await MenuBarItemAXMover.commandDrag(
-                from: CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
-                to: destination
-            )
+            #if DEBUG
+            NSLog("IceLayout native item drag source=%@ destination=%@", NSStringFromRect(sourceFrame), NSStringFromPoint(destination))
+            #endif
+            if let source = dragSourcePoint(for: item) {
+                await MenuBarItemAXMover.commandDrag(from: source, to: destination)
+            } else if !(await moveOccludedItem(item, to: toKind, before: target.item)) {
+                sections = snapshotBeforeDrag
+                await rescanAfterDrag()
+                return
+            }
             sections = snapshotBeforeDrag
             await rescanAfterDrag()
             if hasLanded(itemID: itemID, targetID: targetID, fromKind: fromKind, toKind: toKind) {
                 // Same as section drops: one settled re-scan after landing,
                 // don't trust the immediate post-drag snapshot.
-                pendingMoves.remove(itemID)
-                isMoving = false
-                dropTargetID = nil
                 await refreshAfterDrop()
                 return
             }
             try? await Task.sleep(for: .milliseconds(400))
         }
-        pendingMoves.remove(itemID)
-        isMoving = false
-        dropTargetID = nil
         await refreshAfterDrop()
+        moveFailure = "macOS did not confirm this move. Press Refresh to check the current layout."
+    }
+
+    /// Hosted status windows remain addressable even when their icons are behind the notch.
+    /// Resolve both endpoints from one snapshot; never choose a nearest or ambiguous window.
+    private func moveOccludedItem(
+        _ item: RowItem,
+        to kind: MenuBarItemAXDiscovery.SectionKind,
+        before target: RowItem? = nil
+    ) async -> Bool {
+        var windows = WindowInfo.getAllWindows().filter { $0.isMenuBarItem }
+        func match(_ row: RowItem) -> MenuBarItem? {
+            let candidates = windows.filter {
+                $0.ownerPID == row.ownerPID || $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter"
+            }
+            guard let element = row.axElement,
+                  let frame = MenuBarItemAXDiscovery.frame(of: element), frame == row.quartzFrame,
+                  let index = MenuBarItemAXMover.matchingWindowIndex(for: frame, in: candidates.map(\.frame))
+            else {
+                return nil
+            }
+            return MenuBarItem(itemWindow: candidates[index])
+        }
+        guard let source = match(item) else {
+            #if DEBUG
+            NSLog("IceLayout window source did not match current AX identity/frame: %@", item.title)
+            #endif
+            return false
+        }
+        let destination: MenuBarItemManager.MoveDestination
+        if let target {
+            guard let anchor = match(target), anchor.windowID != source.windowID else {
+                return false
+            }
+            destination = .leftOfItem(anchor)
+        } else {
+            let identifier: ControlItem.Identifier = kind == .alwaysHidden ? .alwaysHidden : .hidden
+            let expectedX = kind == .alwaysHidden ? alwaysHiddenDividerX : hiddenDividerX
+            guard let expectedX else {
+                return false
+            }
+            let anchors = windows.filter {
+                // Compact dividers have a 4pt AX hit area around their 1pt window.
+                // Their left edges differ by 1.5pt, plus possible pixel rounding.
+                $0.title == identifier.rawValue && abs($0.frame.minX - expectedX) <= 2 &&
+                    abs($0.frame.midY - (item.quartzFrame?.midY ?? .infinity)) <= 1 &&
+                    ($0.ownerPID == NSRunningApplication.current.processIdentifier ||
+                        $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter")
+            }
+            guard anchors.count == 1, let anchor = MenuBarItem(itemWindow: anchors[0]) else {
+                #if DEBUG
+                NSLog("IceLayout window divider %@ at AX x=%f has %d matching anchors", identifier.rawValue, expectedX, anchors.count)
+                #endif
+                return false
+            }
+            destination = kind == .visible ? .rightOfItem(anchor) : .leftOfItem(anchor)
+        }
+        #if DEBUG
+        NSLog("IceLayout window move source=%u frame=%@ destination=%@", source.windowID, NSStringFromRect(source.frame), String(describing: destination))
+        #endif
+        do {
+            try await appState.itemManager.move(item: source, to: destination, preflight: {
+                guard self.isPresented, self.ownsLayoutSession, !Task.isCancelled else { return false }
+                windows = WindowInfo.getAllWindows().filter { $0.isMenuBarItem }
+                guard match(item)?.windowID == source.windowID else { return false }
+                let anchor: MenuBarItem
+                switch destination {
+                case let .leftOfItem(item), let .rightOfItem(item): anchor = item
+                }
+                if let target {
+                    return match(target)?.windowID == anchor.windowID
+                }
+                return windows.contains {
+                    $0.windowID == anchor.windowID && $0.frame == anchor.frame && $0.ownerPID == anchor.ownerPID
+                }
+            })
+            moveFailure = nil
+            return true
+        } catch {
+            moveFailure = "macOS could not move \(item.title) from behind the notch. Press Refresh to check its position."
+            #if DEBUG
+            NSLog("IceLayout window move failed: %@", String(describing: error))
+            #endif
+            return false
+        }
+    }
+
+    /// AX reports frames even for icons hidden behind the camera notch.
+    /// Only grab a part of the icon that lies in a usable menu-bar region.
+    private func dragSourcePoint(for item: RowItem) -> CGPoint? {
+        guard let frame = item.quartzFrame else {
+            return nil
+        }
+        let regions = NSScreen.screens.flatMap { screen -> [CGRect] in
+            let display = CGDisplayBounds(screen.displayID)
+            if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+                return [left, right].map { area in
+                    CGRect(
+                        x: display.minX + area.minX - screen.frame.minX,
+                        y: display.minY + screen.frame.maxY - area.maxY,
+                        width: area.width,
+                        height: area.height
+                    )
+                }
+            }
+            return [CGRect(x: display.minX, y: display.minY, width: display.width, height: NSStatusBar.system.thickness)]
+        }
+        let point = MenuBarItemAXMover.dragPoint(in: frame, usableRegions: regions)
+        if point == nil {
+            moveFailure = "\(item.title) is behind the camera notch or outside the usable menu bar. Free some menu-bar space, then try again."
+        }
+        return point
     }
 
     /// True when the item already sits immediately before the target in its group.
@@ -800,6 +981,8 @@ struct MenuBarLayoutSettingsPane: View {
                         systemImage: systemImage,
                         appIcon: appIcon,
                         isSystem: bundleID?.hasPrefix("com.apple.") == true,
+                        ownerPID: item.ownerPID,
+                        axElement: nil,
                         quartzFrame: item.frame
                     )
                 )
@@ -832,6 +1015,8 @@ struct MenuBarLayoutSettingsPane: View {
                         systemImage: systemImage,
                         appIcon: appIcon,
                         isSystem: item.bundleID?.hasPrefix("com.apple.") == true,
+                        ownerPID: item.pid,
+                        axElement: item.element,
                         quartzFrame: item.axFrame
                     )
                 )
@@ -1007,6 +1192,8 @@ private struct RowItem: Identifiable {
     let appIcon: NSImage?
     /// true for com.apple.* bundles: attaches the Apple logo badge as in the mock.
     let isSystem: Bool
+    let ownerPID: pid_t
+    let axElement: AXUIElement?
     /// Frame in Quartz coordinates (top-left origin, same system as `CGEvent`),
     /// used as the start point for a Command-drag.
     let quartzFrame: CGRect?
