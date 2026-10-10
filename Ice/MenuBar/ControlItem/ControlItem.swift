@@ -499,20 +499,11 @@ final class ControlItem {
             if NSEvent.modifierFlags == .control {
                 statusItem.showMenu(createMenu(with: appState))
             } else if
-                NSEvent.modifierFlags == .option,
-                appState.settingsManager.advancedSettingsManager.canToggleAlwaysHiddenSection
-            {
-                if let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden) {
-                    alwaysHiddenSection.toggle()
-                }
-            } else if
-                identifier == .iceIcon,
+                NSEvent.modifierFlags == .option || (identifier == .iceIcon && event.clickCount == 2),
+                appState.settingsManager.advancedSettingsManager.canToggleAlwaysHiddenSection,
                 let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden),
                 alwaysHiddenSection.isEnabled
             {
-                // The Ice icon drives the always-hidden section, leaving the
-                // hidden section untouched (it is driven by click/hover/scroll
-                // on empty menu bar space, its divider, or its hotkey).
                 alwaysHiddenSection.toggle()
             } else {
                 section?.toggle()
