@@ -863,7 +863,7 @@ struct MenuBarLayoutSettingsPane: View {
         alwaysHiddenDividerX = alwaysHiddenX
 
         var axFallback = [MenuBarItemAXDiscovery.AXMenuBarItem]()
-        if appState.itemManager.itemCache.allItems.isEmpty, MenuBarItemAXDiscovery.isTrusted() {
+        if MenuBarItemAXDiscovery.isTrusted() {
             let apps = NSWorkspace.shared.runningApplications
             axFallback = await Task.detached(priority: .userInitiated) {
                 MenuBarItemAXDiscovery.discoverItems(in: apps)
@@ -961,6 +961,17 @@ struct MenuBarLayoutSettingsPane: View {
                 // transiently on first touch — reuse + cache it.
                 let app = item.owningApplication
                 let bundleID = app?.bundleIdentifier
+                // Native windows and AX content frames differ by status-item padding.
+                // Keep the exact AX identity and content frame for notch fallback checks.
+                let axMatches = axFallback.filter { candidate in
+                    guard candidate.pid == item.ownerPID || bundleID == "com.apple.controlcenter",
+                          let frame = candidate.axFrame
+                    else {
+                        return false
+                    }
+                    return MenuBarItemAXMover.matchingWindowIndex(for: frame, in: [item.frame]) == 0
+                }
+                let axItem = axMatches.count == 1 ? axMatches[0] : nil
                 let systemImage = MenuBarItemAXDiscovery.systemImageName(
                     forTitle: item.title ?? item.displayName, bundleID: bundleID
                 )
@@ -982,8 +993,8 @@ struct MenuBarLayoutSettingsPane: View {
                         appIcon: appIcon,
                         isSystem: bundleID?.hasPrefix("com.apple.") == true,
                         ownerPID: item.ownerPID,
-                        axElement: nil,
-                        quartzFrame: item.frame
+                        axElement: axItem?.element,
+                        quartzFrame: axItem?.axFrame ?? item.frame
                     )
                 )
             }
@@ -1109,7 +1120,7 @@ struct MenuBarLayoutSettingsPane: View {
         alwaysHiddenDividerX = alwaysHiddenX
 
         var axFallback = [MenuBarItemAXDiscovery.AXMenuBarItem]()
-        if appState.itemManager.itemCache.allItems.isEmpty, hasAccessibilityPermission {
+        if hasAccessibilityPermission {
             let apps = NSWorkspace.shared.runningApplications
             axFallback = await Task.detached(priority: .userInitiated) {
                 MenuBarItemAXDiscovery.discoverItems(in: apps)
