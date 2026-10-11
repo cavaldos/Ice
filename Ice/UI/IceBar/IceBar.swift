@@ -742,12 +742,13 @@ private struct IceBarContentView: View {
             let candidates = windows.filter {
                 $0.ownerPID == item.pid || $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter"
             }
-            guard MenuBarItemAXMover.matchingWindowIndex(for: frame, in: candidates.map(\.frame)) != nil else {
+            guard let index = MenuBarItemAXMover.matchingWindowIndex(for: frame, in: candidates.map(\.frame), requireContainment: false) else {
                 return nil
             }
+            let nativeFrame = candidates[index].frame
             func boundary(_ title: String) -> CGFloat? {
                 let anchors = windows.filter {
-                    $0.title == title && abs($0.frame.midY - frame.midY) <= 1 &&
+                    $0.title == title && abs($0.frame.midY - nativeFrame.midY) <= 1 &&
                         !$0.frame.isEmpty && !$0.frame.isInfinite && $0.frame.minX.isFinite &&
                         ($0.ownerPID == NSRunningApplication.current.processIdentifier ||
                             $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter")
@@ -757,7 +758,7 @@ private struct IceBarContentView: View {
             guard let hidden = boundary("HItem") else { return nil }
             let always = alwaysHiddenEnabled ? boundary("AHItem") : nil
             guard !alwaysHiddenEnabled || (always.map { $0 < hidden } == true) else { return nil }
-            return MenuBarItemAXDiscovery.classify(centerX: frame.midX, hiddenDividerX: hidden, alwaysHiddenDividerX: always)
+            return MenuBarItemAXDiscovery.classify(centerX: nativeFrame.midX, hiddenDividerX: hidden, alwaysHiddenDividerX: always)
         }
         func kind(for item: MenuBarItemAXDiscovery.AXMenuBarItem) -> MenuBarItemAXDiscovery.SectionKind? {
             if let native = nativeKind(for: item) { return native }

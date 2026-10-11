@@ -166,6 +166,36 @@ struct Logger {
     WindowInfo.windows = nativeItems + [h, ah]
     MenuBarItemAXDiscovery.items = [.init(title: "stale", axFrame: CGRect(x: -3962, y: 986, width: 24, height: 24))]
     await check("parked AX item cannot inherit native section", hidden: nil, always: nil, expected: [])
+    // Real collapsed geometry captured on macOS 27. AX bounds may extend beyond
+    // the hosted window despite retaining its exact center.
+    let captured: [(String, CGRect, CGRect)] = [
+        ("Claude", CGRect(x: -9212, y: 3.5, width: 42, height: 26), CGRect(x: -9211, y: 0, width: 40, height: 33)),
+        ("CodexBar", CGRect(x: -9134, y: 4.5, width: 36, height: 24), CGRect(x: -9133, y: 0, width: 34, height: 33)),
+        ("Spotlight", CGRect(x: -9100, y: 4.5, width: 34, height: 24), CGRect(x: -9099, y: 0, width: 32, height: 33)),
+        ("Bluesnooze", CGRect(x: -9068, y: 4.5, width: 36, height: 24), CGRect(x: -9067, y: 0, width: 34, height: 33)),
+        ("Dropbox", CGRect(x: -3980, y: 4.5, width: 38, height: 24), CGRect(x: -3979, y: 0, width: 36, height: 33)),
+        ("Google Drive", CGRect(x: -3944, y: 4.5, width: 34, height: 24), CGRect(x: -3943, y: 0, width: 32, height: 33)),
+        ("AltTab", CGRect(x: -3823, y: -6.5, width: 24, height: 46), CGRect(x: -3830, y: 0, width: 38, height: 33))
+    ]
+    let capturedAnchors = [
+        WindowInfo(title: "HItem", frame: CGRect(x: -3792, y: 0, width: 5016, height: 33)),
+        WindowInfo(title: "AHItem", frame: CGRect(x: -9033, y: 0, width: 5016, height: 33))
+    ]
+    MenuBarItemAXDiscovery.items = captured.map { .init(title: $0.0, axFrame: $0.1) }
+    WindowInfo.windows = captured.map { WindowInfo(title: "Item-0", frame: $0.2) } + capturedAnchors
+    await check("overflowing AX bounds retain all Hidden icons", hidden: nil, always: nil, expected: ["Dropbox", "Google Drive", "AltTab"])
+    await check("overflowing AX bounds retain only Always Hidden icons", hidden: nil, always: nil, section: .alwaysHidden, expected: ["Claude", "CodexBar", "Spotlight", "Bluesnooze"])
+    for entry in captured {
+        expect("drag matching still rejects overflowing bounds for \(entry.0)", MenuBarItemAXMover.matchingWindowIndex(for: entry.1, in: [entry.2]) == nil)
+    }
+    MenuBarItemAXDiscovery.items = [.init(title: "AltTab", axFrame: captured[6].1)]
+    WindowInfo.windows = capturedAnchors + [WindowInfo(title: "Item-0", frame: captured[6].2), WindowInfo(title: "Duplicate", frame: captured[6].2)]
+    await check("overflow matching remains unique", hidden: nil, always: nil, expected: [])
+    WindowInfo.windows = capturedAnchors + [WindowInfo(title: "Item-0", frame: captured[6].2.offsetBy(dx: 2, dy: 0))]
+    await check("overflow matching rejects shifted centers", hidden: nil, always: nil, expected: [])
+    MenuBarItemAXDiscovery.items = [.init(title: "oversized", axFrame: CGRect(x: -3861, y: -40, width: 100, height: 113))]
+    WindowInfo.windows = capturedAnchors + [WindowInfo(title: "Item-0", frame: captured[6].2)]
+    await check("overflow matching rejects excessive size differences", hidden: nil, always: nil, expected: [])
     expect("shared classifier still treats nil as a disabled section", MenuBarItemAXDiscovery.classify(centerX: 600, hiddenDividerX: nil, alwaysHiddenDividerX: 500) == .visible)
     exit(failures == 0 ? 0 : 1)
 }

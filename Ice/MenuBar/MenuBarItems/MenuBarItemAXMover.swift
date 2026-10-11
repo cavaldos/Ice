@@ -17,7 +17,9 @@ import Cocoa
 /// (origin bottom-left) here; mixing them up drops the item in the wrong spot
 /// and a rescan then shows the old position (looking like it "snapped back").
 enum MenuBarItemAXMover {
-    static func matchingWindowIndex(for frame: CGRect, in windows: [CGRect]) -> Int? {
+    /// Display-only classification can accept centered AX bounds that extend past
+    /// their host window. Native drag targeting retains containment by default.
+    static func matchingWindowIndex(for frame: CGRect, in windows: [CGRect], requireContainment: Bool = true) -> Int? {
         guard !frame.isEmpty, !frame.isNull, !frame.isInfinite,
               [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
         else {
@@ -25,9 +27,9 @@ enum MenuBarItemAXMover {
         }
         let matches = windows.indices.filter { index in
             let window = windows[index]
-            return !window.isEmpty && !window.isInfinite && window.contains(frame) &&
+            return !window.isEmpty && !window.isInfinite && (!requireContainment || window.contains(frame)) &&
                 abs(window.midX - frame.midX) <= 0.5 && abs(window.midY - frame.midY) <= 0.5 &&
-                window.width - frame.width <= 32 && window.height - frame.height <= 32
+                abs(window.width - frame.width) <= 32 && abs(window.height - frame.height) <= 32
         }
         return matches.count == 1 ? matches[0] : nil
     }
