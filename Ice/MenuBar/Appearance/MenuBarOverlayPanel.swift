@@ -368,8 +368,9 @@ final class MenuBarOverlayPanelContentView: NSView {
     /// the background rescan only corrects them.
     ///
     /// The Accessibility fallback scan blocks in cross-process IPC, so it must
-    /// never run inside `draw(_:)`. Draws read this cache (main thread only);
-    /// stale entries trigger a background rescan that redisplays on completion.
+    /// never run inside `draw(_:)`. All shared overlay state is main-queue
+    /// confined; background measurements return values to the main queue.
+    /// Stale entries trigger a background rescan that redisplays on completion.
     private static var trailingWidthCache = [CGDirectDisplayID: (width: CGFloat, date: Date)]()
 
     /// Displays with a background trailing-width rescan in flight.
@@ -542,6 +543,7 @@ final class MenuBarOverlayPanelContentView: NSView {
     /// run while a full sweep is in flight (the sweep blocks on nothing, but it
     /// takes ~1s; the local walk is ~0.1s and independent of it).
     private func applyQuickLeadingEdge(for display: CGDirectDisplayID, verdict: EdgeVerdict) {
+        dispatchPrecondition(condition: .onQueue(.main))
         // ponytail: one quick measure per 0.2s per display. A toggle fires
         // $isVisible + $windowFrame for every control item (5+ calls), which
         // was 5 overlapping AX walks for the same answer.
@@ -1185,8 +1187,9 @@ final class MenuBarOverlayPanelContentView: NSView {
     /// - Parameter quick: when the edge check already knows which way the
     ///   cluster moved, re-measure locally first (~0.1s) so the pill tracks
     ///   hide/show instantly; the full sweep still runs right after to
-    ///   confirm/correct via main-queue ordering.
+    ///   confirm/correct the measurement.
     private func refreshTrailingStatusWidth(for display: CGDirectDisplayID, force: Bool, quick verdict: EdgeVerdict? = nil) {
+        dispatchPrecondition(condition: .onQueue(.main))
         let cached = Self.trailingWidthCache[display]
         let isStale = force || cached.map { Date().timeIntervalSince($0.date) > Self.trailingWidthTTL } ?? true
         guard isStale else {
@@ -1206,12 +1209,12 @@ final class MenuBarOverlayPanelContentView: NSView {
         // Never collapse to 0 while a stale-but-sane value exists: a
         // slightly wrong pill is far less jarring than a disappearing one.
         let previous = cached?.width ?? Self.settledWidth(for: display, concealed: concealed) ?? 0
+        if let verdict {
+            // Throttle state belongs to the main queue; the quick measure
+            // dispatches its expensive AX walk to a background queue itself.
+            applyQuickLeadingEdge(for: display, verdict: verdict)
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            if let verdict {
-                // Fast local re-measure ahead of the full sweep. Main-queue
-                // FIFO applies this before the sweep's completion below.
-                self?.applyQuickLeadingEdge(for: display, verdict: verdict)
-            }
             let result = Self.trailingStatusWidthFallback(for: display)
             let width = result?.width ?? previous
             DispatchQueue.main.async { [weak self] in
