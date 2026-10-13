@@ -428,7 +428,7 @@ enum MenuBarItemAXDiscovery {
     }
 
     /// Reads an element's raw frame (AX coordinates), nil when absent.
-    private static func frame(of element: AXUIElement) -> CGRect? {
+    static func frame(of element: AXUIElement) -> CGRect? {
         var position: AnyObject?
         var size: AnyObject?
         guard

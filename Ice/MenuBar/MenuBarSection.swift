@@ -279,6 +279,7 @@ final class MenuBarSection {
         guard
             persistState || iceBarPanel?.isActivatingAXItem != true,
             let appState,
+            !appState.menuBarManager.isEditingLayout,
             !isHidden
         else {
             return

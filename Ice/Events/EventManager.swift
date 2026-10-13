@@ -405,7 +405,10 @@ extension EventManager {
         appState.appearanceManager.setIsDraggingMenuBarItem(true)
 
         // Don't continue if the setting to show the sections is disabled.
-        guard appState.settingsManager.advancedSettingsManager.showAllSectionsOnUserDrag else {
+        guard
+            !appState.menuBarManager.isEditingLayout,
+            appState.settingsManager.advancedSettingsManager.showAllSectionsOnUserDrag
+        else {
             return
         }
 

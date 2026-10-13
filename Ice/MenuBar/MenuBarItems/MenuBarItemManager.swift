@@ -588,6 +588,21 @@ extension MenuBarItemManager {
             }
         }
     }
+
+    /// Layout moves cannot wait indefinitely or treat latched Caps Lock as a held modifier.
+    private func waitForLayoutMoveInput(timeout: Duration = .seconds(2)) async throws {
+        let deadline = ContinuousClock.now + timeout
+        let heldModifiers: NSEvent.ModifierFlags = [.command, .option, .shift, .control, .function]
+        while true {
+            try Task.checkCancellation()
+            let mouseIsStill = lastMouseMoveStartDate.map { Date.now.timeIntervalSince($0) > 0.1 } ?? true
+            if NSEvent.modifierFlags.isDisjoint(with: heldModifiers), mouseIsStill {
+                return
+            }
+            guard ContinuousClock.now < deadline else { throw TaskTimeoutError() }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
 }
 
 // MARK: - Move Items
@@ -994,6 +1009,13 @@ extension MenuBarItemManager {
             throw EventError(code: .eventCreationFailure, item: item)
         }
 
+        var released = false
+        defer {
+            if !released {
+                postEvent(mouseUpEvent, to: .sessionEventTap)
+                postEvent(mouseUpEvent, to: .pid(item.ownerPID))
+            }
+        }
         try await scrombleEvent(
             mouseDownEvent,
             from: .pid(item.ownerPID),
@@ -1006,6 +1028,7 @@ extension MenuBarItemManager {
             to: .sessionEventTap,
             item: item
         )
+        released = true
     }
 
     /// Moves a menu bar item to the given destination, without restoring the mouse
@@ -1104,7 +1127,8 @@ extension MenuBarItemManager {
     /// - Parameters:
     ///   - item: A menu bar item to move.
     ///   - destination: A destination to move the menu bar item.
-    func move(item: MenuBarItem, to destination: MoveDestination) async throws {
+    func move(item: MenuBarItem, to destination: MoveDestination, preflight: (() -> Bool)? = nil) async throws {
+        try Task.checkCancellation()
         if try itemHasCorrectPosition(item: item, for: destination) {
             Logger.itemManager.debug("\(item.logString) is already in the correct position")
             return
@@ -1113,8 +1137,12 @@ extension MenuBarItemManager {
         do {
             // Order of these waiters matters, as the modifiers could be released
             // while the mouse is still moving.
-            try await waitForNoModifiersPressed()
-            try await waitForMouseToStopMoving()
+            if preflight != nil {
+                try await waitForLayoutMoveInput()
+            } else {
+                try await waitForNoModifiersPressed()
+                try await waitForMouseToStopMoving()
+            }
         } catch {
             throw EventError(code: .couldNotComplete, item: item)
         }
@@ -1146,6 +1174,8 @@ extension MenuBarItemManager {
         // Item movement can occasionally fail. Retry up to a total of 5 attempts,
         // throwing the last attempt's error if it fails.
         for n in 1...5 {
+            try Task.checkCancellation()
+            guard preflight?() ?? true else { throw EventError(code: .invalidItem, item: item) }
             do {
                 try await moveItemWithoutRestoringMouseLocation(item, to: destination)
                 guard let newFrame = getCurrentFrame(for: item) else {
@@ -1158,6 +1188,8 @@ extension MenuBarItemManager {
                     throw EventError(code: .couldNotComplete, item: item)
                 }
             } catch where n < 5 {
+                try Task.checkCancellation()
+                guard preflight?() ?? true else { throw EventError(code: .invalidItem, item: item) }
                 Logger.itemManager.warning("Attempt \(n) to move \(item.logString) failed (error: \(error))")
                 try await wakeUpItem(item)
                 Logger.itemManager.info("Retrying move of \(item.logString)")

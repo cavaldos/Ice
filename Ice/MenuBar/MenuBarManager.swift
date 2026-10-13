@@ -34,6 +34,51 @@ final class MenuBarManager: ObservableObject {
     /// The managed sections in the menu bar.
     private(set) var sections = [MenuBarSection]()
 
+    /// Keep native items measurable while arranging them in Settings.
+    private(set) var isEditingLayout = false
+    private var layoutRestoreStates = [
+        (section: MenuBarSection, state: ControlItem.HidingState, visible: Bool, revision: Int)
+    ]()
+
+    func beginLayoutEditing() -> Bool {
+        guard !sections.isEmpty, !isEditingLayout, !iceBarPanel.isActivatingAXItem else {
+            return false
+        }
+        isEditingLayout = true
+        iceBarPanel.close()
+        for section in sections where section.isEnabled && section.controlItem.isAddedToMenuBar {
+            let state = section.controlItem.state
+            let visible = section.controlItem.isVisible
+            section.setState(.showItems, persist: false)
+            if section.controlItem.isSectionDivider {
+                section.controlItem.isVisible = true
+            }
+            section.controlItem.isCompactForLayout = true
+            layoutRestoreStates.append((section, state, visible, section.stateRevision))
+        }
+        return true
+    }
+
+    func endLayoutEditing() {
+        guard isEditingLayout else {
+            return
+        }
+        for saved in layoutRestoreStates {
+            saved.section.controlItem.isCompactForLayout = false
+            if saved.section.stateRevision == saved.revision {
+                saved.section.setState(saved.state, persist: false)
+                saved.section.controlItem.isVisible = saved.visible
+            } else {
+                saved.section.controlItem.updateStatusItem(with: saved.section.controlItem.state)
+            }
+        }
+        layoutRestoreStates.removeAll()
+        isEditingLayout = false
+        for section in sections where section.controlItem.state == .showItems {
+            section.startRehideChecks()
+        }
+    }
+
     /// The panel that contains the Ice Bar interface.
     let iceBarPanel: IceBarPanel
 

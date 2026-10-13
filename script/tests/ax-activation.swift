@@ -115,6 +115,7 @@ final class MenuBarSection {
     // PRODUCTION_STOP_REHIDE
 }
 final class MenuBarManager {
+    var isEditingLayout = false
     let sections = MenuBarSection.Name.allCases.map { MenuBarSection(name: $0) }
     var iceBarPanel: IceBarPanel!
     func section(withName name: MenuBarSection.Name) -> MenuBarSection? { sections.first { $0.name == name } }
@@ -381,6 +382,14 @@ let tests = #"""
     idleHover.handleShowOnHover()
     await until("idle hover recheck") { idleHover.outsideChecks >= 2 }
     expect("hover exit outside activation hides transiently", idleApp.menuBarManager.sections.allSatisfy { $0.controlItem.state == .hideItems && $0.persistedWrites == 0 })
+
+    let (layoutApp, _, _) = setup()
+    layoutApp.menuBarManager.isEditingLayout = true
+    for section in layoutApp.menuBarManager.sections { section.setState(.showItems, persist: false) }
+    layoutApp.menuBarManager.sections[1].hide(persistState: false)
+    expect("automatic hiding cannot collapse the layout being edited", layoutApp.menuBarManager.sections.allSatisfy { $0.controlItem.state == .showItems })
+    layoutApp.menuBarManager.sections[1].hide(persistState: true)
+    expect("menu-bar toggles cannot remove the layout editor's live dividers", layoutApp.menuBarManager.sections.allSatisfy { $0.controlItem.state == .showItems && $0.persistedWrites == 0 })
 
     let (nativeApp, _, _) = setup()
     for section in nativeApp.menuBarManager.sections { section.useIceBar = false }

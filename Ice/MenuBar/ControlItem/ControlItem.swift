@@ -60,6 +60,13 @@ final class ControlItem {
     /// A Boolean value that indicates whether the control item is visible (`@Published`).
     @Published var isVisible = true
 
+    /// Keep the section anchors measurable without using full icon slots in the layout editor.
+    var isCompactForLayout = false {
+        didSet {
+            updateStatusItem(with: state)
+        }
+    }
+
     /// The frame of the control item's window (`@Published`).
     @Published private(set) var windowFrame: CGRect?
 
@@ -187,7 +194,11 @@ final class ControlItem {
                 else {
                     return
                 }
-                if isVisible {
+                if isCompactForLayout, state == .showItems {
+                    constraint?.isActive = false
+                    statusItem.button?.image = nil
+                    statusItem.length = 2
+                } else if isVisible {
                     statusItem.length = switch section.name {
                     case .visible: Lengths.standard
                     case .hidden, .alwaysHidden:
@@ -212,7 +223,10 @@ final class ControlItem {
         constraint?.publisher(for: \.isActive)
             .removeDuplicates()
             .sink { [weak self] isActive in
-                self?.isVisible = isActive
+                guard let self, !isCompactForLayout else {
+                    return
+                }
+                isVisible = isActive
             }
             .store(in: &c)
 
@@ -402,6 +416,12 @@ final class ControlItem {
             return
         }
 
+        defer {
+            if isCompactForLayout, state == .showItems {
+                button.image = nil
+            }
+        }
+
         switch section.name {
         case .visible:
             isVisible = true
@@ -479,20 +499,11 @@ final class ControlItem {
             if NSEvent.modifierFlags == .control {
                 statusItem.showMenu(createMenu(with: appState))
             } else if
-                NSEvent.modifierFlags == .option,
-                appState.settingsManager.advancedSettingsManager.canToggleAlwaysHiddenSection
-            {
-                if let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden) {
-                    alwaysHiddenSection.toggle()
-                }
-            } else if
-                identifier == .iceIcon,
+                NSEvent.modifierFlags == .option || (identifier == .iceIcon && event.clickCount == 2),
+                appState.settingsManager.advancedSettingsManager.canToggleAlwaysHiddenSection,
                 let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden),
                 alwaysHiddenSection.isEnabled
             {
-                // The Ice icon drives the always-hidden section, leaving the
-                // hidden section untouched (it is driven by click/hover/scroll
-                // on empty menu bar space, its divider, or its hotkey).
                 alwaysHiddenSection.toggle()
             } else {
                 section?.toggle()

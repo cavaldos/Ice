@@ -672,8 +672,8 @@ private struct IceBarContentView: View {
     }
 
     /// Scans AX for the open section, filtering with the same divider-based
-    /// classification as Menu Bar Layout. If the dividers haven't laid out yet
-    /// (all nil), shows everything instead of returning an empty bar.
+    /// classification as Menu Bar Layout. Unknown section membership is withheld
+    /// rather than exposing Always Hidden items in the normal bar.
     ///
     /// Scans up to 3 times, ~0.8s apart: on macOS 27 the menubar layout needs
     /// time for the dividers to settle after showing a section; the first scan
@@ -710,10 +710,11 @@ private struct IceBarContentView: View {
         let apps = NSWorkspace.shared.runningApplications
         let wantedSection = section
 
-        let (found, axDividers) = await Task.detached(priority: .userInitiated) {
+        let (found, axDividers, windows) = await Task.detached(priority: .userInitiated) {
             (
                 MenuBarItemAXDiscovery.discoverItems(in: apps),
-                MenuBarItemAXDiscovery.dividerFrames()
+                MenuBarItemAXDiscovery.dividerFrames(),
+                WindowInfo.getAllWindows().filter { $0.isMenuBarItem }
             )
         }.value
 
@@ -725,19 +726,54 @@ private struct IceBarContentView: View {
         func settledMinX(_ frame: CGRect?) -> CGFloat? {
             frame.flatMap { MenuBarItemAXDiscovery.isSettledDividerFrame($0) ? $0.minX : nil }
         }
-        func saneMinX(_ value: CGFloat?) -> CGFloat? {
-            value.flatMap { $0 > 0 ? $0 : nil }
-        }
         let hiddenX = settledMinX(axDividers.hidden)
-            ?? saneMinX(menuBarManager.section(withName: .hidden)?.controlItem.window?.frame.minX)
+            ?? settledMinX(menuBarManager.section(withName: .hidden)?.controlItem.window?.frame)
         let alwaysHiddenX = settledMinX(axDividers.alwaysHidden)
-            ?? saneMinX(menuBarManager.section(withName: .alwaysHidden)?.controlItem.window?.frame.minX)
+            ?? settledMinX(menuBarManager.section(withName: .alwaysHidden)?.controlItem.window?.frame)
 
-        func kind(centerX: CGFloat?) -> MenuBarItemAXDiscovery.SectionKind {
-            MenuBarItemAXDiscovery.classify(centerX: centerX, hiddenDividerX: hiddenX, alwaysHiddenDividerX: alwaysHiddenX)
+        let alwaysHiddenEnabled = menuBarManager.section(withName: .alwaysHidden)?.isEnabled == true
+        guard wantedSection != .alwaysHidden || alwaysHiddenEnabled else {
+            axRows = []
+            return
         }
-        // The always-hidden divider alone cannot separate hidden from visible items.
-        let hiddenBoundaryMissing = hiddenX == nil
+
+        // Hosted windows retain real horizontal order even when collapsed spacers
+        // push items offscreen. Match the AX item uniquely before using that geometry.
+        func nativeKind(for item: MenuBarItemAXDiscovery.AXMenuBarItem) -> MenuBarItemAXDiscovery.SectionKind? {
+            guard let frame = item.axFrame else { return nil }
+            let candidates = windows.filter {
+                $0.ownerPID == item.pid || $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter"
+            }
+            guard let index = MenuBarItemAXMover.matchingWindowIndex(for: frame, in: candidates.map(\.frame), requireContainment: false) else {
+                return nil
+            }
+            let nativeFrame = candidates[index].frame
+            func boundary(_ title: String) -> CGFloat? {
+                let anchors = windows.filter {
+                    $0.title == title && abs($0.frame.midY - nativeFrame.midY) <= 1 &&
+                        !$0.frame.isEmpty && !$0.frame.isInfinite && $0.frame.minX.isFinite &&
+                        ($0.ownerPID == NSRunningApplication.current.processIdentifier ||
+                            $0.owningApplication?.bundleIdentifier == "com.apple.controlcenter")
+                }
+                return anchors.count == 1 ? anchors[0].frame.minX : nil
+            }
+            guard let hidden = boundary("HItem") else { return nil }
+            let always = alwaysHiddenEnabled ? boundary("AHItem") : nil
+            guard !alwaysHiddenEnabled || (always.map { $0 < hidden } == true) else { return nil }
+            return MenuBarItemAXDiscovery.classify(centerX: nativeFrame.midX, hiddenDividerX: hidden, alwaysHiddenDividerX: always)
+        }
+        func kind(for item: MenuBarItemAXDiscovery.AXMenuBarItem) -> MenuBarItemAXDiscovery.SectionKind? {
+            if let native = nativeKind(for: item) { return native }
+            guard let frame = item.axFrame, !frame.isEmpty, !frame.isInfinite,
+                  frame.midX.isFinite, MenuBarItemAXDiscovery.isSettledDividerFrame(frame),
+                  let hiddenX,
+                  !alwaysHiddenEnabled || (alwaysHiddenX.map { $0 < hiddenX } == true)
+            else {
+                return nil
+            }
+            return MenuBarItemAXDiscovery.classify(centerX: frame.midX, hiddenDividerX: hiddenX, alwaysHiddenDividerX: alwaysHiddenEnabled ? alwaysHiddenX : nil)
+        }
+        let wantedKind: MenuBarItemAXDiscovery.SectionKind = wantedSection == .alwaysHidden ? .alwaysHidden : .hidden
 
         // Stable IDs across scans so SwiftUI doesn't redraw the whole list.
         var idCounts = [String: Int]()
@@ -754,10 +790,7 @@ private struct IceBarContentView: View {
         var icons = [pid_t: NSImage]()
         var rows = [AXRowItem]()
         for item in ordered {
-            // The bar currently merges hidden + alwaysHidden (excluding visible): dividers
-            // while the spacer is expanding aren't reliable enough to split the 2 sections,
-            // and the user intent is a single bar for all hidden apps.
-            if !hiddenBoundaryMissing, kind(centerX: item.axFrame?.midX) == .visible {
+            if kind(for: item) != wantedKind {
                 continue
             }
             // Same icon selection as Menu Bar Layout: familiar system extras
@@ -782,20 +815,8 @@ private struct IceBarContentView: View {
                 )
             )
         }
-        // Expanding spacer (garbage divider frames): drop items already visible in the
-        // trailing pill region — the user already sees them on the menubar. Only filter
-        // when the hidden/visible boundary is missing, even if always-hidden is readable.
-        // Skip fullscreen (pill isn't drawn, width is stale).
-        if hiddenBoundaryMissing,
-           !appState.isActiveSpaceFullscreen,
-           let trailingWidth = MenuBarOverlayPanelContentView.currentTrailingVisibleWidth(for: screen.displayID),
-           trailingWidth > 0, trailingWidth < screen.frame.width
-        {
-            let visibleMinX = screen.frame.maxX - trailingWidth
-            rows.removeAll { ($0.midX ?? .greatestFiniteMagnitude) >= visibleMinX - 4 }
-        }
         axRows = rows
-        Logger.iceBar.info("axScan done wanted=\(wantedSection) attempt=\(attempt) found=\(found.count) rows=\(rows.count) hiddenBoundaryMissing=\(hiddenBoundaryMissing)")
+        Logger.iceBar.info("axScan done wanted=\(wantedSection) attempt=\(attempt) found=\(found.count) rows=\(rows.count)")
     }
 
     /// The panel owns the activation task after closing and releasing this view.
