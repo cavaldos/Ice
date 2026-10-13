@@ -4,6 +4,7 @@ let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .deletingLastPathComponent().deletingLastPathComponent().path
 let pane = try String(contentsOfFile: repo + "/Ice/Settings/SettingsPanes/MenuBarLayoutSettingsPane.swift", encoding: .utf8)
 let mover = try String(contentsOfFile: repo + "/Ice/MenuBar/MenuBarItems/MenuBarItemAXMover.swift", encoding: .utf8)
+let discovery = try String(contentsOfFile: repo + "/Ice/MenuBar/MenuBarItems/MenuBarItemAXDiscovery.swift", encoding: .utf8)
 func method(_ source: String, _ signature: String) -> String {
     let start = source.range(of: signature)!.lowerBound
     let end = source.range(of: "\n    }\n", range: start..<source.endIndex)!.upperBound
@@ -40,9 +41,15 @@ enum MenuBarItemAXDiscovery {
     }
     static var items = [AXMenuBarItem]()
     static var trusted = true
+    static var hiddenX: CGFloat = 1223
+    static var alwaysX: CGFloat = 1067
+    static var duringDiscovery: (() -> Void)?
     static func isTrusted() -> Bool { trusted }
-    static func discoverItems(in apps: [FixtureApplication]) -> [AXMenuBarItem] { items }
-    static func classify(centerX: CGFloat?, hiddenDividerX: CGFloat?, alwaysHiddenDividerX: CGFloat?) -> SectionKind { .alwaysHidden }
+    static func discoverItems(in apps: [FixtureApplication]) -> [AXMenuBarItem] {
+        duringDiscovery?()
+        return items
+    }
+    // CLASSIFIER
     static func systemImageName(forTitle: String, bundleID: String?) -> String? { nil }
     static func systemImageName(forIdentifier: String?) -> String? { nil }
     static func inputSourceIcon() -> NSImage? { nil }
@@ -77,7 +84,7 @@ final class Pane {
     var sections = [MenuBarItemAXDiscovery.SectionKind: [RowItem]]()
     var anchorY: CGFloat = 0
     var iconCache = [pid_t: NSImage]()
-    func resolveDividers() -> (CGFloat?, CGFloat?) { (1223, 1067) }
+    func resolveDividers() -> (CGFloat?, CGFloat?) { (MenuBarItemAXDiscovery.hiddenX, MenuBarItemAXDiscovery.alwaysX) }
     // METHODS
 }
 @main struct Tests {
@@ -121,6 +128,15 @@ final class Pane {
         pane.appState.itemManager.itemCache.allItems = []
         await pane.rescanAfterDrag()
         check(pane.sections[.alwaysHidden]?.first?.axElement === element, "empty native cache retains AX fallback")
+        // The system settles the divider while the asynchronous AX walk is running.
+        MenuBarItemAXDiscovery.hiddenX = 1038.5
+        MenuBarItemAXDiscovery.alwaysX = 922.5
+        MenuBarItemAXDiscovery.items = [MenuBarItemAXDiscovery.AXMenuBarItem(
+            element: element, axFrame: CGRect(x: 1047, y: 4.5, width: 24, height: 24))]
+        MenuBarItemAXDiscovery.duringDiscovery = { MenuBarItemAXDiscovery.hiddenX = 1076.5 }
+        await pane.rescanAfterDrag()
+        check(pane.sections[.hidden]?.first?.axElement === element && pane.sections[.visible] == nil,
+              "post-drag classification uses dividers settled during the AX walk")
         exit(failures == 0 ? 0 : 1)
     }
 }
@@ -129,6 +145,8 @@ let directory = FileManager.default.temporaryDirectory.appendingPathComponent("i
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 let file = directory.appendingPathComponent("test.swift")
 try fixture.replacingOccurrences(of: "// METHODS", with: methods)
+    .replacingOccurrences(of: "// CLASSIFIER", with: ["    static func classify(", "    static func normalizedDividers("]
+        .map { method(discovery, $0) }.joined(separator: "\n"))
     .replacingOccurrences(of: "// MATCHER", with: method(mover, "    static func matchingWindowIndex("))
     .write(to: file, atomically: true, encoding: .utf8)
 let binary = directory.appendingPathComponent("test")

@@ -37,7 +37,10 @@ final class Pane {
     var sourceIsReachable = true
     var hasMatchedWindow = false
     var windowMoves = 0
+    var rejectedWindowMoves = 0
+    var successfulWindowMoves = 0
     var nativeMoveSucceeds = true
+    var coordinateMoveSucceeds = true
     var sections: [Kind: [RowItem]] = [.visible: [RowItem(id: "shottr", quartzFrame: CGRect(x: -1000, y: 0, width: 20, height: 24))],
         .hidden: [RowItem(id: "target", quartzFrame: CGRect(x: 840, y: 0, width: 20, height: 24))]]
     var hiddenDividerX: CGFloat? = 900
@@ -58,12 +61,14 @@ final class Pane {
     func moveOccludedItem(_ item: RowItem, to kind: Kind, before target: RowItem? = nil) async -> Bool {
         guard hasMatchedWindow else { return false }
         windowMoves += 1
+        if windowMoves <= rejectedWindowMoves { return false }
+        successfulWindowMoves += 1
         moveFailure = nil
         return true
     }
     func rescanAfterDrag() async {
         // AX reports the live source only after revealing the originals.
-        let moved = nativeMoveSucceeds && (!MenuBarItemAXMover.drags.isEmpty || windowMoves > 0)
+        let moved = nativeMoveSucceeds && ((coordinateMoveSucceeds && !MenuBarItemAXMover.drags.isEmpty) || successfulWindowMoves > 0)
         sections = [.visible: [], .hidden: [RowItem(id: "target", quartzFrame: CGRect(x: 840, y: 0, width: 20, height: 24))]]
         sections[moved ? .hidden : .visible, default: []].insert(
             RowItem(id: "shottr", quartzFrame: CGRect(x: moved ? 820 : 1000, y: 0, width: 20, height: 24)), at: 0)
@@ -106,6 +111,29 @@ final class Pane {
                 && occluded.windowMoves == 1 && MenuBarItemAXMover.drags.isEmpty && !occluded.isMoving
             print("\(rescued ? "PASS" : "FAIL"): \(onto ? "item" : "section") drop moves an occluded source through its matched window")
             if !rescued { failures += 1 }
+
+            MenuBarItemAXMover.drags = []
+            let settling = Pane()
+            settling.sourceIsReachable = false
+            settling.hasMatchedWindow = true
+            settling.rejectedWindowMoves = 1
+            if onto { await settling.drop(itemID: "shottr", onto: "target") }
+            else { await settling.drop(itemID: "shottr", to: .hidden) }
+            let retried = settling.findItem(id: "shottr")?.kind == .hidden && settling.moveFailure == nil
+                && settling.windowMoves == 2 && MenuBarItemAXMover.drags.isEmpty && !settling.isMoving
+            print("\(retried ? "PASS" : "FAIL"): \(onto ? "item" : "section") drop rescans and retries a rejected notch move")
+            if !retried { failures += 1 }
+
+            MenuBarItemAXMover.drags = []
+            let unresponsive = Pane()
+            unresponsive.coordinateMoveSucceeds = false
+            unresponsive.hasMatchedWindow = true
+            if onto { await unresponsive.drop(itemID: "shottr", onto: "target") }
+            else { await unresponsive.drop(itemID: "shottr", to: .hidden) }
+            let recovered = unresponsive.findItem(id: "shottr")?.kind == .hidden && unresponsive.moveFailure == nil
+                && unresponsive.windowMoves == 1 && MenuBarItemAXMover.drags.count == 1 && !unresponsive.isMoving
+            print("\(recovered ? "PASS" : "FAIL"): \(onto ? "item" : "section") drop recovers an unconfirmed coordinate drag through its matched window")
+            if !recovered { failures += 1 }
 
             MenuBarItemAXMover.drags = []
             let failed = Pane()

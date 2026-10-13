@@ -19,7 +19,12 @@ import Cocoa
 enum MenuBarItemAXMover {
     /// Display-only classification can accept centered AX bounds that extend past
     /// their host window. Native drag targeting retains containment by default.
-    static func matchingWindowIndex(for frame: CGRect, in windows: [CGRect], requireContainment: Bool = true) -> Int? {
+    static func matchingWindowIndex(
+        for frame: CGRect,
+        in windows: [CGRect],
+        requireContainment: Bool = true,
+        allowHorizontalOverflow: Bool = false
+    ) -> Int? {
         guard !frame.isEmpty, !frame.isNull, !frame.isInfinite,
               [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
         else {
@@ -27,7 +32,9 @@ enum MenuBarItemAXMover {
         }
         let matches = windows.indices.filter { index in
             let window = windows[index]
-            return !window.isEmpty && !window.isInfinite && (!requireContainment || window.contains(frame)) &&
+            // Some AX elements include a 1pt border outside each horizontal edge.
+            let containmentFrame = window.insetBy(dx: allowHorizontalOverflow ? -1 : 0, dy: 0)
+            return !window.isEmpty && !window.isInfinite && (!requireContainment || containmentFrame.contains(frame)) &&
                 abs(window.midX - frame.midX) <= 0.5 && abs(window.midY - frame.midY) <= 0.5 &&
                 abs(window.width - frame.width) <= 32 && abs(window.height - frame.height) <= 32
         }

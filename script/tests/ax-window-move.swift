@@ -92,6 +92,23 @@ final class Pane {
                   "occluded source uses correct divider and side for \(kind)")
         }
         let target = RowItem(title: "Target", quartzFrame: CGRect(x: 1185, y: 4.5, width: 38, height: 24))
+        // Captured Claude AX bounds overflow the hosted window by 1pt on each side.
+        let claude = RowItem(title: "Claude", quartzFrame: CGRect(x: 770, y: 3.5, width: 42, height: 26))
+        let claudeWindow = WindowInfo(windowID: 5642, frame: CGRect(x: 771, y: 0, width: 40, height: 33))
+        for (name, windows, expected) in [
+            ("centered Claude bounds", [claudeWindow, hidden, always], true),
+            ("ambiguous Claude windows", [claudeWindow, claudeWindow, hidden, always], false),
+            ("shifted Claude window", [WindowInfo(windowID: 5642, frame: claudeWindow.frame.offsetBy(dx: 1, dy: 0)), hidden, always], false),
+            ("excessive Claude overflow", [WindowInfo(windowID: 5642, frame: CGRect(x: 772, y: 0, width: 38, height: 33)), hidden, always], false)
+        ] {
+            WindowInfo.snapshot = windows
+            let pane = Pane()
+            let result = await pane.moveOccludedItem(claude, to: .hidden)
+            let calls = pane.appState.itemManager.calls
+            check(result == expected && (expected
+                  ? calls.count == 1 && calls[0].0 == 5642 && calls[0].1 == 3773 && !calls[0].2
+                  : calls.isEmpty), "\(name) uses only a unique tightly bounded native target")
+        }
         for kind in MenuBarItemAXDiscovery.SectionKind.allCases {
             WindowInfo.snapshot = [source, hidden, always]
             let padded = Pane()

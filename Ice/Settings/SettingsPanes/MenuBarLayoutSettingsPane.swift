@@ -374,7 +374,7 @@ struct MenuBarLayoutSettingsPane: View {
             isMoving = false
             endLayoutEditingIfNeeded()
         }
-        for _ in 0..<3 {
+        for attempt in 0..<3 {
             // An empty CGS cache needs a fresh AX scan too: revealing the
             // originals changes their frames without changing their IDs.
             await rescanAfterDrag()
@@ -408,11 +408,17 @@ struct MenuBarLayoutSettingsPane: View {
             NSLog("IceLayout native drag source=%@ destination=%@ hidden=%@ always=%@", NSStringFromRect(sourceFrame), NSStringFromPoint(destination), String(describing: hiddenDividerX), String(describing: alwaysHiddenDividerX))
             #endif
             if let source = dragSourcePoint(for: item) {
-                await MenuBarItemAXMover.commandDrag(from: source, to: destination)
-            } else if !(await moveOccludedItem(item, to: kind)) {
-                sections = snapshotBeforeDrag
-                await rescanAfterDrag()
-                return
+                // A coordinate can be outside the notch yet still not accept a drag.
+                // After an unconfirmed attempt, try the freshly matched status window.
+                if attempt == 0 {
+                    await MenuBarItemAXMover.commandDrag(from: source, to: destination)
+                } else {
+                    _ = await moveOccludedItem(item, to: kind)
+                }
+            } else {
+                // A native attempt may invalidate its snapshot while settling.
+                // Reconcile and retry with fresh identities, even behind the notch.
+                _ = await moveOccludedItem(item, to: kind)
             }
             sections = snapshotBeforeDrag
             await rescanAfterDrag()
@@ -420,6 +426,7 @@ struct MenuBarLayoutSettingsPane: View {
             NSLog("IceLayout result group=%@ frame=%@", String(describing: findItem(id: itemID)?.kind), String(describing: findItem(id: itemID)?.item.quartzFrame))
             #endif
             if sections[kind]?.contains(where: { $0.id == itemID }) == true {
+                moveFailure = nil
                 // Landed — but the frame right after a drag can still be
                 // settling, so always do one settled re-scan instead of
                 // trusting this snapshot. Otherwise the UI sometimes stays
@@ -479,7 +486,7 @@ struct MenuBarLayoutSettingsPane: View {
             dropTargetID = nil
             endLayoutEditingIfNeeded()
         }
-        for _ in 0..<3 {
+        for attempt in 0..<3 {
             await rescanAfterDrag()
             guard isPresented, !Task.isCancelled else {
                 return
@@ -523,15 +530,18 @@ struct MenuBarLayoutSettingsPane: View {
             NSLog("IceLayout native item drag source=%@ destination=%@", NSStringFromRect(sourceFrame), NSStringFromPoint(destination))
             #endif
             if let source = dragSourcePoint(for: item) {
-                await MenuBarItemAXMover.commandDrag(from: source, to: destination)
-            } else if !(await moveOccludedItem(item, to: toKind, before: target.item)) {
-                sections = snapshotBeforeDrag
-                await rescanAfterDrag()
-                return
+                if attempt == 0 {
+                    await MenuBarItemAXMover.commandDrag(from: source, to: destination)
+                } else {
+                    _ = await moveOccludedItem(item, to: toKind, before: target.item)
+                }
+            } else {
+                _ = await moveOccludedItem(item, to: toKind, before: target.item)
             }
             sections = snapshotBeforeDrag
             await rescanAfterDrag()
             if hasLanded(itemID: itemID, targetID: targetID, fromKind: fromKind, toKind: toKind) {
+                moveFailure = nil
                 // Same as section drops: one settled re-scan after landing,
                 // don't trust the immediate post-drag snapshot.
                 await refreshAfterDrop()
@@ -557,7 +567,9 @@ struct MenuBarLayoutSettingsPane: View {
             }
             guard let element = row.axElement,
                   let frame = MenuBarItemAXDiscovery.frame(of: element), frame == row.quartzFrame,
-                  let index = MenuBarItemAXMover.matchingWindowIndex(for: frame, in: candidates.map(\.frame))
+                  let index = MenuBarItemAXMover.matchingWindowIndex(
+                    for: frame, in: candidates.map(\.frame), allowHorizontalOverflow: true
+                  )
             else {
                 return nil
             }
@@ -604,7 +616,12 @@ struct MenuBarLayoutSettingsPane: View {
             try await appState.itemManager.move(item: source, to: destination, preflight: {
                 guard self.isPresented, self.ownsLayoutSession, !Task.isCancelled else { return false }
                 windows = WindowInfo.getAllWindows().filter { $0.isMenuBarItem }
-                guard match(item)?.windowID == source.windowID else { return false }
+                guard match(item)?.windowID == source.windowID else {
+                    #if DEBUG
+                    NSLog("IceLayout source changed before native move: %@ expected=%@ current=%@ window=%u", item.title, String(describing: item.quartzFrame), String(describing: item.axElement.flatMap { MenuBarItemAXDiscovery.frame(of: $0) }), source.windowID)
+                    #endif
+                    return false
+                }
                 let anchor: MenuBarItem
                 switch destination {
                 case let .leftOfItem(item), let .rightOfItem(item): anchor = item
@@ -619,7 +636,7 @@ struct MenuBarLayoutSettingsPane: View {
             moveFailure = nil
             return true
         } catch {
-            moveFailure = "macOS could not move \(item.title) from behind the notch. Press Refresh to check its position."
+            moveFailure = "macOS could not move \(item.title) in the menu bar. Press Refresh to check its position."
             #if DEBUG
             NSLog("IceLayout window move failed: %@", String(describing: error))
             #endif
@@ -858,10 +875,6 @@ struct MenuBarLayoutSettingsPane: View {
     /// so an AX scan is the only real source of fresh frames and membership.
     private func rescanAfterDrag() async {
         await appState.itemManager.cacheItemsIfNeeded(force: true)
-        let (hiddenX, alwaysHiddenX) = resolveDividers()
-        hiddenDividerX = hiddenX
-        alwaysHiddenDividerX = alwaysHiddenX
-
         var axFallback = [MenuBarItemAXDiscovery.AXMenuBarItem]()
         if MenuBarItemAXDiscovery.isTrusted() {
             let apps = NSWorkspace.shared.runningApplications
@@ -869,6 +882,11 @@ struct MenuBarLayoutSettingsPane: View {
                 MenuBarItemAXDiscovery.discoverItems(in: apps)
             }.value
         }
+        // Read boundaries after the asynchronous walk: native moves can settle
+        // during discovery, making earlier divider coordinates stale.
+        let (hiddenX, alwaysHiddenX) = resolveDividers()
+        hiddenDividerX = hiddenX
+        alwaysHiddenDividerX = alwaysHiddenX
         let (grouped, midY) = buildSections(
             hiddenX: hiddenX,
             alwaysHiddenX: alwaysHiddenX,
@@ -1116,9 +1134,6 @@ struct MenuBarLayoutSettingsPane: View {
                 }
             }
         }
-        hiddenDividerX = hiddenX
-        alwaysHiddenDividerX = alwaysHiddenX
-
         var axFallback = [MenuBarItemAXDiscovery.AXMenuBarItem]()
         if hasAccessibilityPermission {
             let apps = NSWorkspace.shared.runningApplications
@@ -1126,6 +1141,9 @@ struct MenuBarLayoutSettingsPane: View {
                 MenuBarItemAXDiscovery.discoverItems(in: apps)
             }.value
         }
+        (hiddenX, alwaysHiddenX) = resolveDividers()
+        hiddenDividerX = hiddenX
+        alwaysHiddenDividerX = alwaysHiddenX
         let (grouped, midY) = buildSections(hiddenX: hiddenX, alwaysHiddenX: alwaysHiddenX, axFallback: axFallback)
         if !grouped.isEmpty {
             sections = grouped
