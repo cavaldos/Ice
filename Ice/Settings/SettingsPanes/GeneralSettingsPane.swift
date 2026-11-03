@@ -325,14 +325,28 @@ struct GeneralSettingsPane: View {
         )
         .annotation(spacing: 10, font: .callout.bold()) {
             IceGroupBox {
-                Label {
-                    Text(
-                        MenuBarItemSpacingManager.requiresLogoutToApply
-                            ? "Note: On this macOS version, menu bar spacing only takes effect after you log out and back in."
-                            : "Note: You may need to log out and back in for this setting to apply properly."
-                    )
-                } icon: {
-                    Image(systemName: "exclamationmark.circle")
+                VStack(spacing: 6) {
+                    Label {
+                        Text(
+                            MenuBarItemSpacingManager.requiresLogoutToApply
+                                ? "Note: On this macOS version, menu bar spacing only takes effect after you log out and back in."
+                                : "Note: You may need to log out and back in for this setting to apply properly."
+                        )
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle")
+                    }
+                    if MenuBarItemSpacingManager.systemItemsIgnoreSpacing {
+                        Label {
+                            Text(
+                                """
+                                Note: The menu bar items owned by macOS — the clock, Control Center, Wi-Fi, and the \
+                                other system items — keep their own spacing and do not follow this setting.
+                                """
+                            )
+                        } icon: {
+                            Image(systemName: "info.circle")
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }
