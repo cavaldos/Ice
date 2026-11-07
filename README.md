@@ -95,6 +95,7 @@ brew uninstall --cask --zap cavaldos/tap/ice
 | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | ![Menu bar appearance theme settings](./Resources/Image/MenuBarAppearance.png) | ![Menu bar icon spacing settings](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6) |
 
+> ℹ️ **Menu bar item spacing** — on macOS 27 the items owned by macOS (the clock, Control Center, Wi-Fi, and the other system items) are laid out by the system and keep their own fixed spacing; the setting applies to the items of other apps.
 
 > ✅ **macOS 27 fully supported** — works on macOS 14 Sonoma and later, including Sequoia, Tahoe, and macOS 27. If you need a similar tool for macOS 13 Ventura or earlier, check out [Ice 0.11.x](https://github.com/jordanbaird/Ice/releases).
 
