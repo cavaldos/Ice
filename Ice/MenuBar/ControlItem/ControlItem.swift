@@ -82,6 +82,18 @@ final class ControlItem {
     /// A Boolean value that indicates whether the control item is visible (`@Published`).
     @Published var isVisible = true
 
+    /// A Boolean value that indicates whether a section divider is temporarily
+    /// revealed (with its chevron) because the user is Command-dragging a menu
+    /// bar item, regardless of the `ShowSectionDividers` setting.
+    var isRevealedForDrag = false {
+        didSet {
+            guard isSectionDivider, oldValue != isRevealedForDrag else {
+                return
+            }
+            updateStatusItem(with: state)
+        }
+    }
+
     /// The frame of the control item's window (`@Published`).
     @Published private(set) var windowFrame: CGRect?
 
@@ -381,6 +393,7 @@ final class ControlItem {
                     guard
                         let self,
                         isSectionDivider,
+                        !isRevealedForDrag,
                         state == .showItems || MenuBarConcealer.isInUse
                     else {
                         return
@@ -523,7 +536,8 @@ final class ControlItem {
                 button.isHighlighted = false
                 button.image = nil
             case .showItems:
-                let shouldShowDivider = appState.settingsManager.advancedSettingsManager.showSectionDividers
+                let shouldShowDivider = isRevealedForDrag
+                    || appState.settingsManager.advancedSettingsManager.showSectionDividers
                 // ponytail: same sliver collapse as the $showSectionDividers sink
                 // — a `Lengths.standard` item with no image left a ~40pt gap
                 // between the revealed section and the next one.

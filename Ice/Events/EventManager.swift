@@ -384,10 +384,15 @@ extension EventManager {
     // MARK: Handle Left Mouse Up
 
     private func handleLeftMouseUp() {
-        guard let appearanceManager = appState?.appearanceManager else {
+        guard let appState else {
             return
         }
-        appearanceManager.setIsDraggingMenuBarItem(false)
+        appState.appearanceManager.setIsDraggingMenuBarItem(false)
+        // The drag is over: dividers go back to following the
+        // `ShowSectionDividers` setting.
+        for section in appState.menuBarManager.sections {
+            section.controlItem.isRevealedForDrag = false
+        }
     }
 
     // MARK: Handle Left Mouse Dragged
@@ -422,13 +427,13 @@ extension EventManager {
             if section.controlItem.state != .showItems {
                 section.setState(.showItems, persist: false)
             }
-            guard
-                section.controlItem.isSectionDivider,
-                !section.controlItem.isVisible
-            else {
+            guard section.controlItem.isSectionDivider, section.isEnabled else {
                 continue
             }
-            section.controlItem.isVisible = true
+            // Reveal the divider with its chevron so the user can see where
+            // the visible/hidden boundary is. Setting only `isVisible` left
+            // an empty slot with no image when "Show section dividers" is off.
+            section.controlItem.isRevealedForDrag = true
         }
     }
 
