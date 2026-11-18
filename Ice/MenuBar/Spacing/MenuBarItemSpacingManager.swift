@@ -179,6 +179,23 @@ final class MenuBarItemSpacingManager {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
     }
 
+    /// Whether the menu bar items owned by macOS ignore the spacing keys.
+    ///
+    /// On macOS 26 and earlier the clock, Control Center, Wi-Fi, and the other
+    /// system items were ordinary status items, so `NSStatusItemSpacing` and
+    /// `NSStatusItemSelectionPadding` applied to them as well.
+    ///
+    /// Starting with macOS 27 the whole menu bar is a single window owned by
+    /// `MenuBarAgent`, and the system items are laid out by its internal
+    /// `leadingItemSpacing` / `trailingItemSpacing` metrics. Those metrics are
+    /// not exposed in any preference domain (`com.apple.MenuBarAgent` has no
+    /// spacing leaf) and the agent is SIP-protected, so the system items keep
+    /// their default 16 pt gaps no matter what Ice writes. Third-party items
+    /// still honor the keys.
+    static var systemItemsIgnoreSpacing: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+    }
+
     /// Applies the current ``offset``.
     ///
     /// - Note: On macOS 26 and later this only writes the preferences; the
