@@ -98,12 +98,9 @@ final class MenuBarSection {
             if controlItem.state == .showItems {
                 return false
             }
-            switch name {
-            case .visible, .hidden:
-                return iceBarPanel?.currentSection != .hidden
-            case .alwaysHidden:
-                return iceBarPanel?.currentSection != .alwaysHidden
-            }
+            // The dropdown lists every hidden section, so any open dropdown
+            // counts as shown: toggling again closes it instead of reopening.
+            return iceBarPanel?.currentSection == nil
         }
         switch name {
         case .visible, .hidden:

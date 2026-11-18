@@ -227,13 +227,8 @@ struct GeneralSettingsPane: View {
 
     @ViewBuilder
     private var useIceBar: some View {
-        Toggle(isOn: manager.bindings.useIceBar) {
-            HStack {
-                Text("Use Ice Bar")
-                BetaBadge()
-            }
-        }
-            .annotation("Show hidden menu bar items in a separate bar below the menu bar")
+        Toggle("Use Ice Bar", isOn: manager.bindings.useIceBar)
+            .annotation("Show hidden and always-hidden menu bar items in a dropdown below the menu bar")
     }
 
     @ViewBuilder
@@ -246,11 +241,11 @@ struct GeneralSettingsPane: View {
         .annotation {
             switch manager.iceBarLocation {
             case .dynamic:
-                Text("The Ice Bar's location changes based on context")
+                Text("The Ice Bar's dropdown points to the mouse pointer or the Ice icon based on context")
             case .mousePointer:
-                Text("The Ice Bar is centered below the mouse pointer")
+                Text("The Ice Bar's dropdown points to the mouse pointer")
             case .iceIcon:
-                Text("The Ice Bar is centered below the Ice icon")
+                Text("The Ice Bar's dropdown points to the Ice icon")
             }
         }
     }

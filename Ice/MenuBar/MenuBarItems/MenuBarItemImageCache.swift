@@ -274,11 +274,9 @@ final class MenuBarItemImageCache: ObservableObject {
         var sectionsNeedingDisplay = [MenuBarSection.Name]()
         if isSettingsPresented {
             sectionsNeedingDisplay = MenuBarSection.Name.allCases
-        } else if
-            isIceBarPresented,
-            let section = await appState.menuBarManager.iceBarPanel.currentSection
-        {
-            sectionsNeedingDisplay.append(section)
+        } else if isIceBarPresented {
+            // The Ice Bar dropdown lists both hidden sections at once.
+            sectionsNeedingDisplay = [.hidden, .alwaysHidden]
         }
 
         await updateCache(sections: sectionsNeedingDisplay)
