@@ -493,7 +493,11 @@ private struct IceBarContentView: View {
     @EnvironmentObject var itemManager: MenuBarItemManager
     @EnvironmentObject var imageCache: MenuBarItemImageCache
     @EnvironmentObject var menuBarManager: MenuBarManager
-    @State private var axRows = [AXRowItem]()
+    /// The panel builds a new view each time it opens. Rows from the last scan
+    /// are shown at once while a fresh scan runs, instead of a spinner.
+    @MainActor private static var lastAXRows = [AXRowItem]()
+
+    @State private var axRows = Self.lastAXRows
     @State private var hasAXPermission = MenuBarItemAXDiscovery.isTrusted()
     @State private var isLoadingAXRows = false
     @State private var hasLoadedAXRows = false
@@ -813,6 +817,7 @@ private struct IceBarContentView: View {
             )
         }
         axRows = rows
+        Self.lastAXRows = rows
         Logger.iceBar.info("axScan done found=\(found.count) remembered=\(IceBarItemMemory.entries.count) rows=\(rows.count)")
     }
 
